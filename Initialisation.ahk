@@ -22,7 +22,6 @@ global patnom := ""
 global reqnb_norm := ""
 global dateexam := ""
 global proc := ""
-mammoflag := EnvGet("USERPROFILE") "\mammo.flag"
 SetTitleMatchMode 2
 
 OnMessage(WM_COPYDATA, CopyDataHandler)
@@ -84,8 +83,11 @@ if (A_Args.Length == 8) {
         SendCopyData(target, CMD["SetHtmlFile"], htmlPath)
     } else {
         htmlNew := SelectHtmlTemplate(modal, safeProc)
-        if (htmlNew != "")
+        if (htmlNew != "") {
             SendCopyData(target, CMD["SetHtmlFile"], htmlNew)
+            } else {
+	        SendCopyData(target, CMD["SetHtmlFile"], "")
+            }
     }
 
     Sleep 500

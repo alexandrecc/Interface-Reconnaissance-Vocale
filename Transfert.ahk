@@ -612,6 +612,8 @@ ResetRadEdit(target, tempFile, reqnb_full) {
     SendCopyData(target, CMD["SetText"], "{\rtf1\ansi}")
     SendCopyData(target, CMD["SetTitle"], "")
     SendCopyData(target, CMD["SetName"], "")
+    SendCopyData(target, CMD["SetDataContext"], "")
+    SendCopyData(target, CMD["SetHtmlFile"], "")
 
     ; 2) Supprimer le fichier temporaire
     try {
@@ -653,6 +655,8 @@ EraseRadEdit() {
     SendCopyData(target, CMD["SetText"], "{\rtf1\ansi}")
     SendCopyData(target, CMD["SetTitle"], "")
     SendCopyData(target, CMD["SetName"], "")
+    SendCopyData(target, CMD["SetDataContext"], "")
+    SendCopyData(target, CMD["SetHtmlFile"], "")
 
     ; 2) Supprimer le fichier temporaire associé si présent
     if (reqnb_title != "") {
@@ -795,6 +799,7 @@ Pause() {
     SendCopyData(target, CMD["SetName"], "PAUSE SYNCHRO RADEDIT - SYNCHRO FUSION ACTIF")
     SendCopyData(target, CMD["SetText"], "{\rtf1\ansi}")	
     SendCopyData(target, CMD["SetTitle"], "")
+    SendCopyData(target, CMD["SetDataContext"], "")
 }
 
 Resume() {
