@@ -102,6 +102,7 @@ for (;;) {
     $reqnb  = $fields['OrderNb']
     $patdos  = $fields['PatMRN']
     $patnom  = $fields['PatFullName']
+    $dateexam   = $fields['StudyTD']
 
     # === Vérifier le reset après réception du message ===
     $resetFlag = Join-Path $env:USERPROFILE 'tcp_listener.reset'
@@ -158,7 +159,7 @@ if (-not $skipExam) {
     if (-not $skipExam) {
         if (-not $isPaused) {
             Write-Host "ProcDesc: $proc (first_exam=$first_exam)"
-            & ".\Initialisation.ahk" "$proc" "$mod" "$loc" "$first" "$reqnb" "$patdos" "$patnom"
+            & ".\Initialisation.ahk" "$proc" "$mod" "$loc" "$first" "$reqnb" "$patdos" "$patnom" "$dateexam"
         }
         else {
             Write-Host "Pause active – Initialisation.ahk ignoré (forward déjà effectué)."

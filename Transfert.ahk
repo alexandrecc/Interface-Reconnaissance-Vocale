@@ -1,25 +1,33 @@
 #Requires AutoHotkey v2
 
+#Include <TransfertTAFD>
+#Include <AmenderRapport>
+#Include <FinalTextInserts>
+#Include <CheckExam>
+
 WM_COPYDATA := 0x004A
 CMD := Map(
   "SetText",1, "InsertText",2, "SetFile",3, "InsertFile",4, "RequestTemp",5,
   "Response",6, "Error",7, "SetTitle",8, "GetTitle",9, "TitleResponse",10,
   "SetName",11, "GetName",12, "NameResponse",13, "GotoEnd",14,
-  "FixFont",15, "CleanUpEnd",16,
+  "FixFont",15, "CleanUpEnd",16, "SetHtmlFile", 17, "RequestHtmlFile", 18, "HtmlFileResponse", 19,
+  "SetDataContext", 20, "GetDataContext", 21, "DataContextResponse", 22
 )
 global report_file := ""
 global reqnb_name := ""
+global reqnb_norm := ""
+global reqnb_full := ""
+global data_context_json := ""
+global reqnb_title := ""
+
 OnMessage(WM_COPYDATA, CopyDataHandler)
 textFile := ".\Textes\Insertions\textesRapport.txt"
 finalRtf := ".\Textes\Insertions\textefinal.rtf"
 finalRtfSUG := ".\Textes\Insertions\textefinalSUG.rtf"
 flagFile := EnvGet("USERPROFILE") "\pause.flag"
-
-Esc:: {  
-     try WinClose("ahk_exe WINWORD.EXE")
-     MsgBox "Le script est arrêté", "Info", "T1 262144"
-     ExitApp
-}
+global target
+global downloadsDir := EnvGet("USERPROFILE") "\Downloads"
+SetTitleMatchMode 2
 
 if A_Args.Length = 0 {
     MsgBox "Aucun Argument fourni. Utiliser Ouvrir, Fermer, Tout, Signer ou Reculer."
@@ -34,6 +42,9 @@ switch arg {
     case "OuvrirSUG":
         Ouvrir("OuvrirSUG")
     case "Fermer":
+        WinActivate("ahk_exe WINWORD.EXE")
+        WinWaitActive("ahk_exe WINWORD.EXE",,5)
+        Sleep 50
         Fermer()
     case "Tout":
 	Ouvrir()
@@ -57,6 +68,12 @@ switch arg {
 	GotoEndofText()
     case "Basculer":
         Basculer()
+    case "PauseSynchro":
+        PauseSynchro()
+    case "ToutSuivant":
+	Ouvrir()
+	Fermer()
+	Signer()
     default:
         MsgBox "Invalid argument: " arg "`nUse Ouvrir, Fermer, Tout, Signer or Reculer."
 }
@@ -64,6 +81,7 @@ switch arg {
 ExitApp
 
 Ouvrir(mode := "") {
+    global reqnb_norm, reqnb_full, target  
 
 ; === Pré requis:Fenêtre de protocolage fermée
 bloquante := "Module Protocolage"  
@@ -100,8 +118,9 @@ while (A_TickCount < deadline) {
     numReq27   := "WindowsForms10.EDIT." appseg "_r8_ad127"    
     numReq30   := "WindowsForms10.EDIT." appseg "_r8_ad130"
     numReq48   := "WindowsForms10.EDIT." appseg "_r8_ad148"
-    
-radText := ""
+    tabIndex := HasArg("CasExterne") ? 2 : 3
+    radText := ""
+
 found := false
     Loop 15 {
         Try {
@@ -162,7 +181,7 @@ try {
             . "Synapse → " reqnb_norm "`n"
             . "RadImage → " rad_norm "`n`n"
             . "Voulez-vous continuer quand même ?",
-            "Vérification", 0x24) ; Yes/No
+            "Vérification", 0x40024) ; Yes/No + AlwaysOnTop
 
         if (result = "No") {
             ExitApp
@@ -188,7 +207,7 @@ catch as err {
 
     try {
         _ := ControlGetHwnd(tabCtrl, "ahk_exe RadImage.exe")
-        ControlChooseIndex(3, tabCtrl, "ahk_exe RadImage.exe")   ; 3 = Transcription
+        ControlChooseIndex(tabIndex, tabCtrl, "ahk_exe RadImage.exe")  ;tabIndex (default=3, CasExterne=2)
         ok := true
         break
     }
@@ -231,7 +250,7 @@ if !source {
 SendCopyData(source, CMD["CleanUpEnd"], "")
 SendCopyData(source, CMD["FixFont"], "Arial;10")
 
-SendCopyData(source, CMD["RequestTemp"], "")
+SendCopyData(source, CMD["RequestTemp"], '{ "stripHiddenMarkers": true }')
 
 ; Attendre que report_file soit rempli
 maxWait := 1000   ; attendre max 1 seconde
@@ -252,7 +271,7 @@ catch {
 }
 
 doc := word.ActiveDocument
-result := CheckExamList(doc, report_file)
+result := CheckExamList(doc, report_file)  ; contient maintenant result.examType
 
 undo := word.UndoRecord
 oldSU := word.ScreenUpdating
@@ -260,6 +279,27 @@ word.ScreenUpdating := False
 undo.StartCustomRecord("TransfertRapport")
 
 try {
+    switch result.examType {
+        case "TAFD":
+            TransfertTAFD(word, doc, report_file, mode)
+
+        default:
+            TransfertStandard(word, doc, report_file, result, mode)
+    }
+} finally {
+    undo.EndCustomRecord()
+    word.ScreenUpdating := oldSU
+}
+
+ResetRadEdit(target, report_file, reqnb_full)
+
+;fin ouvrir
+}
+
+
+TransfertStandard(word, doc, report_file, result, mode) {
+    ; --- contenu identique à ce que tu avais dans le try de Ouvrir() ---
+
     doc.Content.Delete()
     sel := word.Selection
     sel.InsertFile(report_file)
@@ -270,41 +310,30 @@ try {
 
     RensMaj(doc)
 
-attv := HasArg("AttV")
-if (attv) {
-    InsertManualAttVer(doc)
-    LogAttVer(result.titres)
-} else if (result.needAttVer) {
-    AttVer(doc)
-    LogAttVer(result.titres)
-}
+    attv := HasArg("AttV")
 
-AddText(mode)
-ResetRadEdit(target, report_file)
-
-
-}finally {
-    undo.EndCustomRecord()
-    word.ScreenUpdating := oldSU
-}
+    didAttVer := false
+    if (attv) {
+        InsertManualAttVer(doc)
+        didAttVer := true
+    } else if (result.needAttVer) {
+        AttVer(doc)
+        didAttVer := true
     }
 
-ClickLotCourant() {
-    win := "ahk_exe RadImage.exe"
-    ctrls := WinGetControls(win)
+    if (didAttVer) {
+    global target
 
-    for ctrl in ctrls {
-        if InStr(ctrl, "WindowsForms10.BUTTON.") {
-            txt := ""
-            try txt := ControlGetText(ctrl, win)
-            if InStr(txt, "Lot Courant") {
-                ControlClick ctrl, win
-                return true
-            }
-        }
+    loc := Trim(GetDataContextVar(target, "loc", ""))
+    modal := Trim(GetDataContextVar(target, "modal", ""))
+
+    if (StrLower(loc) = "urgence" && StrUpper(modal) = "CR")
+    LogAttVer(result.titres)
     }
-    return false
+
+    AddText(mode)
 }
+
 
 Fermer() {
 Send "!{F4}"    ; Alt + F4 (close Word)
@@ -343,12 +372,13 @@ if hwnd := WinExist(Title " ahk_exe msedge.exe")
 }
 if !WinWaitActive("ahk_id " hwnd, , 5)
 {
-    MsgBox "Synapse Viewer window not found or not active. Script will exit."
+    ;MsgBox "Synapse Viewer window not found or not active. Script will exit."
     ExitApp
 }
-Sleep 20
-Send "{F8}"
-}
+    Sleep 20
+    Send "{F8}"
+    ;fin Signer
+    }
 
 Reculer() {
 if WinExist("ahk_exe RadImage.exe") {
@@ -372,275 +402,21 @@ GetTextByKey(filePath, key, default:="") {
     return default
 }
 
-AddText(mode := "") {
-    try word := ComObjActive("Word.Application")
-    catch {
-        MsgBox "Word n'est pas ouvert.", "Erreur", "T3"
-        return
-    }
-    doc := word.ActiveDocument
-    sel := word.Selection
+ClickLotCourant() {
+    win := "ahk_exe RadImage.exe"
+    ctrls := WinGetControls(win)
 
-    chosenRtf := (mode = "ToutSUG" or mode = "OuvrirSUG") ? finalRtfSUG : finalRtf
-    if AddFinalRtf(doc, sel, chosenRtf) {
-        return
-    }
-
-
-    ; --- Textes fixes ---
-    textSUG    := GetTextByKey(textFile, "textSUG",	"Examen demandé, réalisé et interprété en urgence sur l'horaire de garde à la demande du médecin prescripteur.")
-    authorLine := GetTextByKey(textFile, "authorLine",	"Dictée faite par Dr")
-    sent1      := GetTextByKey(textFile, "sent1",	"Ce rapport a été généré à l'aide d'un logiciel de reconnaissance vocale.")
-    sent2      := GetTextByKey(textFile, "sent2",	"Pour cette raison il pourrait contenir des erreurs grammaticales, orthographiques ou syntaxiques.")
-
-    ; Bloc en fonction du mode
-    if (mode = "ToutSUG" or mode = "OuvrirSUG") {
-        fullText := "`r`n`r`n" textSUG "`r`n`r`n" authorLine " " GetFullName_API() "`r`n`r`n" sent1 " " sent2
-    } else {
-        fullText := "`r`n`r`n" authorLine " " GetFullName_API() "`r`n`r`n" sent1 " " sent2
-    }
-    ; --- Insertion ---
-    sel.EndKey(6)          ; aller à la fin du doc (wdStory = 6)
-    startPos := sel.Start  ; mémoriser début de l’insertion
-    sel.ParagraphFormat.Alignment := 0
-    sel.TypeText(fullText) ; insérer tout le bloc
-
-    ; --- Mise en forme ---
-    endPos := sel.Start
-    blockRng := doc.Range(startPos, endPos)
-
-    ; Globale : Arial 10 italique
-    blockRng.Font.Name   := "Arial"
-    blockRng.Font.Size   := 10
-    blockRng.Font.Italic := True
-
-    ; Spécifique : première phrase en gras + souligné
-    fr := blockRng.Duplicate
-    fr.Find.ClearFormatting
-    fr.Find.Text := sent1
-    if fr.Find.Execute() {
-        fr.Font.Bold := True
-        ;fr.Font.Underline := 1
-    }
-
-    ; --- Fin ---
-    sel.SetRange(doc.Content.End, doc.Content.End)
-}
-
-GetFullName_API() {
-    NameDisplay := 3
-    len := 256
-    buf := Buffer(len * 2)  ; UTF-16
-
-    ok := DllCall("Secur32\GetUserNameExW"
-                , "Int",  NameDisplay
-                , "Ptr",  buf.Ptr
-                , "UInt*", len)
-
-    if ok {
-        name := StrGet(buf.Ptr, "UTF-16")
-        parts := StrSplit(name, " ")
-        if parts.Length = 2
-            return parts[2] " " parts[1]  ; Inverse : Prénom Nom
-        return name
-    }
-
-    return ""
-}
-
-AddFinalRtf(doc, sel, finalRtfPath := "") {
-    global finalRtf, finalRtfSUG, textFile
-    try {
-        ; 1) Résoudre le chemin demandé
-        if (finalRtfPath = "")
-            finalRtfPath := finalRtf
-
-        abs := finalRtfPath
-        if !InStr(abs, ":")
-            abs := A_ScriptDir "\" RegExReplace(finalRtfPath, "^\.(\\|/)", "")
-
-        ; 2) Si le fichier demandé existe → insertion directe
-        if FileExist(abs) {
-            sel.SetRange(doc.Content.End, doc.Content.End)
-            beforeEnd := doc.Content.End
-            sel.InsertFile(abs)
-            return (doc.Content.End > beforeEnd)
-        }
-
-        ; 3) Sinon, si on a demandé le SUG mais qu'il n'existe pas…
-        ;    On tente: insérer textSUG + insérer le RTF standard si présent
-        ;    (Si le standard n'existe pas non plus → return false, AddText fera son fallback.)
-        ;    On compare avec le chemin SUG global.
-        sugAbs := finalRtfSUG
-        if !InStr(sugAbs, ":")
-            sugAbs := A_ScriptDir "\" RegExReplace(finalRtfSUG, "^\.(\\|/)", "")
-
-        isSUGRequest := (StrLower(abs) = StrLower(sugAbs))
-        if isSUGRequest {
-            ; Standard absolu
-            stdAbs := finalRtf
-            if !InStr(stdAbs, ":")
-                stdAbs := A_ScriptDir "\" RegExReplace(finalRtf, "^\.(\\|/)", "")
-
-            if FileExist(stdAbs) {
-                ; 3a) Insérer la ligne textSUG (style: Arial 10 italique), puis le RTF standard
-                textSUG := GetTextByKey(textFile, "textSUG"
-                    , "Examen demandé, réalisé et interprété en urgence sur l'horaire de garde à la demande du médecin prescripteur.")
-
-                sel.EndKey(6)
-                startSUG := sel.Start
-                sel.TypeText("`r`n`r`n" textSUG "")
-                rngSUG := doc.Range(startSUG, sel.Start)
-                rngSUG.Font.Name   := "Arial"
-                rngSUG.Font.Size   := 10
-                rngSUG.Font.Italic := True
-
-                ; Insérer le RTF standard
-                sel.SetRange(doc.Content.End, doc.Content.End)
-                beforeEnd := doc.Content.End
-                sel.InsertFile(stdAbs)
-                return (doc.Content.End > beforeEnd)
+    for ctrl in ctrls {
+        if InStr(ctrl, "WindowsForms10.BUTTON.") {
+            txt := ""
+            try txt := ControlGetText(ctrl, win)
+            if InStr(txt, "Lot Courant") {
+                ControlClick ctrl, win
+                return true
             }
         }
-
-        ; 4) Rien inséré ici → AddText fera le fallback (incluant textSUG si mode SUG)
-        return false
-    } catch as err {
-        return false
     }
-}
-
-
-
-CleanupEnd(doc) {
-    ; Nettoie les paragraphes vides en fin de document V1
-    while (doc.Paragraphs.Count > 1) {
-        lastPara := doc.Paragraphs.Item(doc.Paragraphs.Count)
-        t := Trim(lastPara.Range.Text, "`r`n `t")
-        if (t = "") {
-            lastPara.Range.Delete()
-        } else {
-            break
-        }
-    }
-}
-
-AmenderRapport(typeAmendement) {
-; === Step 1: Activer la fenêtre Radimage ===
-if !WinExist("ahk_exe RadImage.exe") {
-    MsgBox "Fenêtre Radimage introuvable ou inactive. Le script va se fermer."
-    ExitApp
-}
-WinActivate("ahk_exe RadImage.exe")
-WinWaitActive("ahk_exe RadImage.exe",,5)
-
-Send "!d"
-
-; === Step 2: Attendre et activer la fenêtre Amendement ===
-if !WinWait("Amendement", , 5) {
-    MsgBox "La fenêtre 'Amendement' n'a pas été détectée dans le délai imparti. Le script va s'arrêter."
-    ExitApp
-}
-if !WinWaitActive("Amendement", , 5) {
-    MsgBox "La fenêtre 'Amendement' n'est pas devenue active dans le délai imparti. Le script va s'arrêter."
-    ExitApp
-}
-
-; === Step 3: Écrire Pathologie ou Amender et valider ===
-if (typeAmendement = "Pathologie") {
-    Send "PATHOLOGIE{Enter}"
-} else if (typeAmendement = "Amender" || typeAmendement = "Modification") {
-    Send "Correction{Enter}"   ; mot tapé reste Correction
-} else {
-    MsgBox "Argument invalide : " typeAmendement
-    ExitApp
-}
-
-; === Attendre Word ===
-if !WinWaitActive("ahk_exe WINWORD.EXE", , 10) {
-    MsgBox "Word did not open or become active in time. Script will exit."
-    ExitApp
-}
-
-; === Step 4: Insérer texte formaté dans Word ===
-try {
-    wdApp := ComObjActive("Word.Application")
-    if !wdApp.ActiveDocument {
-        throw Error("Aucun document actif dans Word.")
-    }
-    wdDoc := wdApp.ActiveDocument
-    rng := wdDoc.Range()
-    rng.Collapse(0)
-
-    ; Police par défaut
-    rng.Font.Name := "Arial"
-    rng.Font.Size := 10
-
-    ; Contenu spécifique
-    if (typeAmendement = "Pathologie") {
-	rng.InsertParagraphAfter()
-	rng.InsertParagraphAfter()
-        rng.Collapse(0)
-        rng.Text := "RAPPORT COMPLÉMENTAIRE"
-        rng.Font.Bold := True
-	rng.Font.Italic := False
-        rng.InsertParagraphAfter()
-
-        rng.Collapse(0)
-        rng.Text := "RAPPORT DE PATHOLOGIE"
-        rng.Font.Bold := True
-	rng.Font.Italic := False
-        rng.InsertParagraphAfter()
-        rng.InsertParagraphAfter()
-
-        rng.Collapse(0)
-        rng.Text := "[]"
-        rng.Font.Bold := False
-        rng.Font.Italic := False
-        rng.InsertParagraphAfter()
-        rng.InsertParagraphAfter()
-
-        rng.Collapse(0)
-        rng.Text := "Se référer au rapport de pathologie complet pour les détails."
-        rng.InsertParagraphAfter()
-        rng.InsertParagraphAfter()
-
-    } else if (typeAmendement = "Amender") {
- 	rng.InsertParagraphAfter()
-	rng.InsertParagraphAfter()
-        rng.Collapse(0)
-        rng.Text := "RAPPORT COMPLÉMENTAIRE"
-        rng.Font.Bold := True
-	rng.Font.Italic := False
-        rng.InsertParagraphAfter()
-        rng.InsertParagraphAfter()
-        
-        rng.Collapse(0)
-        rng.Text := "[]"
-        rng.Font.Bold := False
-        rng.Font.Italic := False
-        rng.InsertParagraphAfter()
-        rng.InsertParagraphAfter()
-
-    } else if (typeAmendement = "Modification") {
-        rng.InsertParagraphAfter()
-	rng.InsertParagraphAfter()
-    }
-
-    ; Phrase italique + gras avec date et nom
-    today := FormatTime(, "d MMMM yyyy")
-    rng.Collapse(0)
-    rng.Text := "Rapport amendé le " today " par Dr " GetFullName_API()    
-    rng.Font.Bold := True
-    rng.Font.Italic := True
-    rng.InsertParagraphAfter()
-
-}
-catch as err {
-    MsgBox "Erreur COM Word: " err.Message
-    ExitApp
-}
-Send "^!{Right}"
+    return false
 }
 
 CheckFenDict(fenDict, win := "ahk_exe Radimage.exe") {
@@ -675,23 +451,66 @@ FixFontsInWord() {
 }
 
 CopyDataHandler(wParam, lParam, msg, hwnd) {
-    static CMD_RESPONSE := 6, CMD_ERROR := 7, CMD_TITLERESPONSE := 10, CMD_NAMERESPONSE := 13
-    global report_file, reqnb_title, reqnb_name
+    static CMD_RESPONSE := 6
+    static CMD_ERROR := 7
+    static CMD_TITLERESPONSE := 10
+    static CMD_NAMERESPONSE := 13
+    static CMD_HTMLFILERESPONSE := 19
+    static CMD_DATACONTEXTRESPONSE := 22
 
-    cmd := NumGet(lParam, 0, "UPtr")
+    global report_file, html_file, reqnb_title, reqnb_name, last_radedit_error, data_context_json
+
+    cmd  := NumGet(lParam, 0, "UPtr")
     size := NumGet(lParam, A_PtrSize, "UInt")
     text := StrGet(NumGet(lParam, 2*A_PtrSize, "Ptr"), size/2, "UTF-16")
+    text := Trim(text)
 
     if (cmd = CMD_RESPONSE) {
         report_file := text
+    } else if (cmd = CMD_HTMLFILERESPONSE) {
+        html_file := text
     } else if (cmd = CMD_TITLERESPONSE) {
-        reqnb_title := Trim(text)
+        reqnb_title := text
     } else if (cmd = CMD_NAMERESPONSE) {
-        reqnb_name := Trim(text)
+        reqnb_name := text
+    } else if (cmd = CMD_DATACONTEXTRESPONSE) {
+        data_context_json := text
     } else if (cmd = CMD_ERROR) {
-        MsgBox "RadEdit error: " text
+        last_radedit_error := text
+        ; MsgBox "RadEdit error: " text  ; (optionnel) je le laisse commenté pour éviter les popups
     }
     return true
+}
+
+GetDataContextRaw(hwnd, timeout := 800) {
+    global CMD, data_context_json
+
+    data_context_json := ""  ; IMPORTANT: évite un vieux contexte
+    SendCopyData(hwnd, CMD["GetDataContext"], "")
+
+    t0 := A_TickCount
+    while (data_context_json = "" && A_TickCount - t0 < timeout)
+        Sleep 20
+
+    return data_context_json
+}
+
+GetDataContextVar(hwnd, key, default := "", timeout := 800) {
+    raw := GetDataContextRaw(hwnd, timeout)
+    if (raw = "")
+        return default
+
+    ; 1) JSON simple: "loc":"Urgence"
+    patt := '"\Q' key '\E"\s*:\s*"(.*?)"'
+    if RegExMatch(raw, patt, &m)
+        return m[1]
+
+    ; 2) fallback key=value (si jamais ton DataContext est sous cette forme)
+    patt2 := "im)^\s*\Q" key "\E\s*=\s*(.+?)\s*$"
+    if RegExMatch(raw, patt2, &m2)
+        return m2[1]
+
+    return default
 }
 
 
@@ -754,243 +573,6 @@ GetWordsByKey(filePath, key, defaults := []) {
 }
 
 
-CheckExamList(doc, report_file) {
-    app := doc.Application
-    defaultExcl := ["renseignements", "manipulation", "rapport", "sein", "reconstruction", "inj."]
-    exclusions := GetWordsByKey(textFile, "exclusions", defaultExcl)
-    titres := []
-
-    ; --- Étape 1 : Extraire titres de WordRadimage ---
-    paras := doc.Paragraphs
-    count := paras.Count
-    Loop count {
-        para := paras.Item(A_Index)
-        txt := Trim(para.Range.Text, "`r`n `t")
-        if (SubStr(txt, -1) = ":")
-            txt := RTrim(txt, ":")
-
-        if (txt = "")
-            continue
-
-        lower := StrLower(txt)
-        exclu := false
-        for excl in exclusions {
-            if InStr(lower, excl) = 1 {
-                exclu := true
-                break
-            }
-        }
-        if !exclu
-            titres.Push(txt)
-    }
-
-    ; --- Étape 2 : Lire directement le contenu RTF (rapide et sans Word) ---
-try {
-    rawText := FileRead(report_file, "CP1252")
-} catch as err {
-    MsgBox "Impossible de lire le fichier temporaire :`n" report_file "`n`nErreur : " err.Message, "Erreur critique", 262144
-    CancelTransfer()
-    return { titres: titres, missing: [], needAttVer: false }
-}
-
-; --- Décodage des séquences RTF \'xx -> caractère ---
-rawText := DecodeRTFHex(rawText)
-
-; (optionnel, si un jour tu vois des \u2019, \u00E9, etc.)
-; rawText := DecodeRTFUnicode(rawText)
-
-; --- Nettoyage des balises RTF (tes lignes existantes) ---
-rawText := StrReplace(rawText, "{\par", "`n")
-rawText := RegExReplace(rawText, "\\[a-z0-9]+(?:-?\d+)?[ ]?", "")
-rawText := RegExReplace(rawText, "\{\\[^}]+\}", "")
-rawText := RegExReplace(rawText, "[{}]", "")
-rawText := RegExReplace(rawText, "[\x00-\x08\x0B-\x1F]", "")
-
-; Séparer en lignes (paragraphes)
-lines := []
-for l in StrSplit(rawText, ["`r`n", "`n", "`r"]) {
-    l := Trim(l, "`r`n `t")
-    if (l != "")
-        lines.Push(l)
-}
-
-; --- Détection stricte "Attention à vérifier" (insensible à la casse) ---
-needAttVer := false
-if (lines.Length > 0) {
-    last := lines[lines.Length]
-    last := StrReplace(last, Chr(160), " ")   ; NBSP -> espace, au cas où
-    last := Trim(last, "`r`n `t")             ; on tolère juste espaces/retours
-    if RegExMatch(last, "i)^\s*Attention à vérifier\s*$")
-        needAttVer := true
-}
-
-
-    ; --- Étape 3 : Vérification ---
-    missing := []
-    for titre in titres {
-        found := false
-        titreNorm := StrLower(Trim(titre))
-
-        for line in lines {
-            lineTrim := StrLower(Trim(line))
-            if (lineTrim = "")
-                continue
-            ; Comparaison : le titre Word doit être au début de la ligne du fichier temp
-            if (InStr(lineTrim, titreNorm) = 1) {
-                found := true
-                break
-            }
-        }
-
-        if !found
-            missing.Push(titre)
-    }
-
-   ; --- Étape 4 : Si manquants, proposer options (fenêtre + touche 1/2/3) ---
-if (missing.Length > 0) {
-    total := titres.Length
-    nbMiss := missing.Length
-
-    msg := "Ces examens sont absents de votre dictée :" . "`n`n"
-    for titre in missing
-        msg .= "- " titre . "`n"
-
-    msg .= "`n" . "Choisissez l'option appropriée :" . "`n`n"
-    msg .= "1 - Continuer (ignorer et poursuivre)" . "`n`n"
-    msg .= "2 - Retour à la dictée (annuler le transfert)" . "`n`n"
-    msg .= "3 - Insérer le(s) titre(s) manquant(s)"
-
-    dlg := Gui("+AlwaysOnTop", "Rapport incomplet")
-    dlg.SetFont("s12 bold", "Segoe UI")    
-    dlg.Add("Text", "w500 h500", msg)
-    dlg.Show()
-
-    ih := InputHook("L1")
-    ih.Start()
-    ih.Wait()
-    choice := ih.Input
-
-    dlg.Destroy()
-
-        if (choice = "1") {
-        return { titres: titres, missing: []            , needAttVer: needAttVer }
-    } else if (choice = "2") {
-        CancelTransfer()
-        return { titres: titres, missing: []            , needAttVer: needAttVer }
-    } else if (choice = "3") {
-        return { titres: titres, missing: missing       , needAttVer: needAttVer }
-    } else {
-        CancelTransfer()
-        return { titres: titres, missing: []            , needAttVer: needAttVer }
-    }
-
-
-}
-
-return { titres: titres, missing: [], needAttVer: needAttVer }
-
-}
-
-
-InsertMissingTitles(doc, report_file, titres, missing) {
-    ; --- 1) Construire la liste des titres éligibles (titres - missing) ---
-    titresEligibles := []
-    for t in titres {
-        skip := false
-        for m in missing {
-            if (StrLower(Trim(t)) = StrLower(Trim(m))) {
-                skip := true
-                break
-            }
-        }
-        if !skip
-            titresEligibles.Push(t)
-    }
-
-    ; --- Ajouter l’option spéciale %TITRE% ---
-    titresEligibles.Push("%TITRE%")
-
-    ; --- 2) Pour chaque titre manquant, demander où insérer ---
-    for titre in missing {
-        msg := "⚠️  Titre manquant : " titre . "`n`n"
-        msg .= "Choisissez après quel titre l’insérer (appuyez sur le chiffre) :" . "`n`n"
-
-        for i, t in titresEligibles {
-    if (t = "%TITRE%")
-        msg .= i ". Insérer à la place de: %TITRE%`n"
-    else
-        msg .= i ". " . t . "`n"
-}
-
-        dlg := Gui("+AlwaysOnTop", "Insertion de titre manquant")
-        dlg.SetFont("s12")
-        dlg.Add("Text", "w800 h600", msg)
-        dlg.Show()
-
-        ih := InputHook("L1")
-        ih.Start(), ih.Wait()
-        choice := ih.Input
-        dlg.Destroy()
-
-        if (!RegExMatch(choice, "^\d+$")) {
-            CancelTransfer()
-            return
-        }
-
-        idx := choice + 0
-        if (idx < 1 || idx > titresEligibles.Length) {
-            CancelTransfer()
-            return
-        }
-
-        anchor := titresEligibles[idx]
-
-        ; --- 3) Cas spécial : insertion à la place de %TITRE% ---
-        if (anchor = "%TITRE%") {
-    ; Rechercher le littéral %TITRE% dans tout le document,
-    ; puis remplacer directement dans le Range trouvé (sans passer par Selection)
-    rng := doc.Content
-    f := rng.Find
-    f.ClearFormatting()
-    f.MatchWildcards := false
-    f.MatchCase := false
-    f.MatchWholeWord := false
-    f.Text := "%TITRE%"
-
-    if (f.Execute()) {
-        rng.Text := StrUpper(titre)  ; remplace le marqueur par le vrai titre
-        rng.Font.Bold := True
-        rng.Font.Underline := 1
-    } else {
-        MsgBox "Aucun marqueur %TITRE% trouvé dans le document.`nLe titre n’a pas pu être inséré.", "Erreur", 262144
-        CancelTransfer()
-    }
-    continue  ; passer au titre manquant suivant
-}
-
-        ; --- 4) Sinon, insertion après un vrai titre existant ---
-        anchorNorm := StrLower(RTrim(Trim(anchor), ": "))
-        pos := 0
-        paras := doc.Paragraphs
-        count := paras.Count
-        Loop count {
-            ptxt := paras.Item(A_Index).Range.Text
-            pnorm := StrLower(RTrim(Trim(ptxt, "`r`n `t"), ": "))
-            if (pnorm = anchorNorm) {
-                pos := paras.Item(A_Index).Range.End
-                break
-            }
-        }
-
-        if (pos > 0) {
-            r := doc.Range(pos, pos)
-            r.Text := StrUpper(titre) . "`r" . r.Text
-            r.Font.Bold := True
-            r.Font.Underline := 1
-        }
-    }
-}
-
 
 SendToRadImage(key) {
     if !WinWaitActive("ahk_exe RadImage.exe", , 1) {
@@ -1010,6 +592,7 @@ CancelTransfer() {
             Send "{o}"   ; confirme avec la touche "o"
         }
     }
+
     MsgBox "Vous pouvez maintenant aller continuer votre dictée.", "TERMINÉ", 262144
 
     if WinExist("ahk_exe RadEdit.exe") {
@@ -1023,7 +606,7 @@ CancelTransfer() {
     ExitApp
 }
 
-ResetRadEdit(target, tempFile) {
+ResetRadEdit(target, tempFile, reqnb_full) {
     global CMD
     ; 1) Vider RadEdit
     SendCopyData(target, CMD["SetText"], "{\rtf1\ansi}")
@@ -1032,11 +615,25 @@ ResetRadEdit(target, tempFile) {
 
     ; 2) Supprimer le fichier temporaire
     try {
-        if FileExist(tempFile) {
+        if (tempFile != "" && FileExist(tempFile)) {
             FileDelete(tempFile)
         }
     } catch as err {
         MsgBox "Impossible d'effacer le fichier temporaire :`n" tempFile "`n`nErreur : " err.Message, "ATTENTION", 262144
+    }
+    ; 3) Supprimer les HTML temporaires associés (RadEdit_<safeReqnb>_*.html)
+    if (reqnb_full != "") {
+        safeReqnb := RegExReplace(reqnb_full, "[^\w-]", "_")
+        pattern := A_Temp "\RadEdit_" safeReqnb "_*.html"
+
+        try {
+            Loop Files, pattern {
+                try FileDelete(A_LoopFileFullPath)
+            }
+        } catch as err {
+            ; optionnel: MsgBox si tu veux être averti d'un problème global de loop
+            ; MsgBox "Erreur nettoyage HTML temp:`n" err.Message, "ATTENTION", 262144
+        }
     }
 }
 
@@ -1047,6 +644,9 @@ EraseRadEdit() {
         MsgBox "RadEdit introuvable.", "Erreur", 262144
         return
     }
+    WinActivate "ahk_exe RadEdit.exe"
+    WinWaitActive "ahk_exe RadEdit.exe", , 1
+
     reqnb_title := GetTitleFromRadEdit(target)
 
     ; 1) Effacer contenu RadEdit
@@ -1142,74 +742,6 @@ RensMaj(doc) {
     }
 }
 
-AttVer(doc) {
-    AlignLeft := 0, AlignCenter := 1
-
-    paras := doc.Paragraphs
-    cnt := paras.Count
-    if (cnt < 1)
-        return
-
-    ; Dernier paragraphe non vide
-    idx := 0
-    Loop cnt {
-      i := cnt - A_Index + 1
-      t := Trim(paras.Item(i).Range.Text, "`r`n `t")
-      if (t != "") {
-          idx := i
-          break
-      }
-    }
-    if (idx = 0)
-      return
-
-    p := paras.Item(idx)
-
-; --- normalisation ultra-légère et tolérante ---
-txt := p.Range.Text
-txt := StrReplace(txt, Chr(160), " ")       ; remplace NBSP par espace
-txt := Trim(txt, "`r`n `t")
-txt := RTrim(txt, " :")                     ; tolère un ":" final + espace
-
-; --- match tolérant accents / casse ---
-if !RegExMatch(txt, "i)^\s*attention\s+(?:à|a)\s+v(?:é|e)rifier\s*$")
-    return
-
-
-    ; --- Ajouter un Enter AVANT ---
-    p.Range.InsertParagraphBefore()
-    paras := doc.Paragraphs          ; refresh
-    idx := idx + 1
-    p := paras.Item(idx)
-    if (idx > 1)
-        paras.Item(idx - 1).Alignment := AlignLeft
-
-    ; --- Mise en forme de CE paragraphe ---
-    r := p.Range
-    txtRange := doc.Range(r.Start, Max(r.Start, r.End - 1))
-    try txtRange.Case := 1            ; wdUpperCase
-    catch as err {
-        up := StrUpper(txtRange.Text)
-        txtRange.Text := up
-    }
-    txtRange.Font.Name      := "Arial"
-    txtRange.Font.Size      := 12
-    txtRange.Font.Bold      := True
-    txtRange.Font.Underline := 1
-    p.Alignment := AlignCenter
-
-    ; Paragraphe suivant à gauche (pour ne pas polluer AddText)
-    if (idx < paras.Count)
-        paras.Item(idx + 1).Alignment := AlignLeft
-    else {
-        r2 := doc.Range(doc.Content.End, doc.Content.End)
-        r2.InsertParagraphAfter()
-        paras := doc.Paragraphs
-        paras.Item(paras.Count).Alignment := AlignLeft
-    }
-}
-
-
 GotoEndofText(){
 	target := WinExist("ahk_exe RadEdit.exe")
 	if !target {
@@ -1228,76 +760,6 @@ HasArg(name) {
     return false
 }
 
-LogAttVer(titres := [], rootPath := "\\bureautique.chrdl.qc.ca\CHRDL\Imagerie Medicale\Partage\Suivi Urgence") {
-    
-    ; 1) S’assurer du dossier
-    try {
-        if !DirExist(rootPath)
-            DirCreate(rootPath)
-    } catch as err {
-        return false
-    }
-
-    ; 2) Récupérer le NAME du bandeau RadEdit
-    name := ""
-    try {
-        hwnd := WinExist("ahk_exe RadEdit.exe")
-        if (hwnd)
-            name := GetNameFromRadEdit(hwnd)
-    }
-
-    if (name = "")
-        name := "(NAME inconnu)"
-
-    ; 3) Construire le bloc texte
-    ts := FormatTime(A_Now, "yyyy-MM-dd HH:mm:ss")
-    buf := name "  —  Date de lecture: " ts "`r`n"
-    if (IsObject(titres) && titres.Length > 0) {
-        for t in titres
-            buf .= "- " t "`r`n"
-    }
-    buf .= "----------------------------------------`r`n"
-
-    ; 4) Append dans le fichier log
-    logFile := rootPath "\ATTENTION À VÉRIFIER.txt"   ; nom exact demandé
-    try {
-        FileAppend(buf, logFile, "UTF-8")
-        return true
-    } catch as err {
-        return false
-    }
-}
-
-InsertManualAttVer(doc) {
-    ; Ancre sûre à la fin du document, même s’il est vide
-    endPos := doc.Content.End
-    startPos := (endPos > 0) ? (endPos - 1) : 0
-    r := doc.Range(startPos, startPos)
-
-    ; 2 lignes vides AVANT
-    r.InsertParagraphAfter()
-    r.Collapse(0)
-    r.InsertParagraphAfter()
-    r.Collapse(0)
-
-    ; Insérer le texte et le formater
-    r.Text := "ATTENTION À VÉRIFIER"
-    r.Font.Name      := "Arial"
-    r.Font.Size      := 12
-    r.Font.Bold      := True
-    r.Font.Underline := 1
-    r.ParagraphFormat.Alignment := 1
-    
-    r.InsertParagraphAfter()
-
-    ; Revenir en Arial 10 pour la suite (à la nouvelle fin)
-    endPos2 := doc.Content.End
-    tailPos := (endPos2 > 0) ? (endPos2 - 1) : 0
-    tail := doc.Range(tailPos, tailPos)
-    tail.Font.Name := "Arial"
-    tail.Font.Size := 10
-}
-
 Basculer() {
     if FileExist(flagFile) {
         FileDelete(flagFile)
@@ -1309,10 +771,27 @@ Basculer() {
     }
 }
 
+PauseSynchro() {
+    if FileExist(flagFile) {
+        FileDelete(flagFile)
+        target := WinExist("ahk_exe RadEdit.exe")
+        ;SendCopyData(target, CMD["SetText"], "{\rtf1\ansi}")	
+        SendCopyData(target, CMD["SetName"], "")
+        ;SendCopyData(target, CMD["SetTitle"], "")
+    }
+    else {
+        FileAppend("", flagFile) 
+        target := WinExist("ahk_exe RadEdit.exe")
+        SendCopyData(target, CMD["SetName"], "PAUSE SYNCHRO RADEDIT")
+        ;SendCopyData(target, CMD["SetText"], "{\rtf1\ansi}")	
+        ;SendCopyData(target, CMD["SetTitle"], "")
+        }
+}
+
 Pause() {
     target := WinExist("ahk_exe RadEdit.exe")
     if !ProcessExist("FusionDictate.exe")
-    Run '"C:\APP\Fusion_StartUp\startup_imagerie.cmd"', , "Hide"
+        Run '"C:\APP\Fusion_StartUp\startup_imagerie.cmd"', , "Hide"
     SendCopyData(target, CMD["SetName"], "PAUSE SYNCHRO RADEDIT - SYNCHRO FUSION ACTIF")
     SendCopyData(target, CMD["SetText"], "{\rtf1\ansi}")	
     SendCopyData(target, CMD["SetTitle"], "")
@@ -1326,3 +805,4 @@ Resume() {
     if ProcessExist("FusionDictate.exe")
        ProcessClose("FusionDictate.exe")
 }
+

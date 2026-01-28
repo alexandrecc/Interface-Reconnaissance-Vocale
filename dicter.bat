@@ -2,7 +2,9 @@
 
 set "SCRIPT=listener_forwarder.ps1"
 
-set "SRC=\\regional.reg14.rtss.qc.ca\app\DragonMedicalOne\Radiologie\Interface Reconnaissance Vocale"
+set "SRC=\\regional.reg14.rtss.qc.ca\app\DragonMedicalOne\Radiologie\Preprod"
+
+
 set "DST=C:\APP\Interface Reconnaissance Vocale"
 set "ROBO_OPTS=/E /XO /R:1 /W:1"
 robocopy "%SRC%" "%DST%" %ROBO_OPTS%
