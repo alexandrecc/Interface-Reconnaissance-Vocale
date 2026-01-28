@@ -1,0 +1,31 @@
+; --- Textes fixes pour fin de rapport TOUT EN ITALIQUE ---
+;
+; --- TEXTE STANDARD POUR CODE SUG ---
+
+textSUG=Examen demandé, réalisé et interprété en urgence sur l'horaire de garde à la demande du médecin prescripteur.
+
+
+
+; --- IDENTIFICATION RADIOLOGUE ---
+
+authorLine=Dictée faite par Dr
+
+
+
+; --- INFORMATION SUR RECONNAISSANCE VOCALE EN FIN DE RAPPORT. UNE SEUL PARAGRAPHE ---
+; --- "sent 1" EN CARACTÈRE GRAS // "sent 2" EN CARACTÈRE NORMAL ---
+
+sent1=Ce rapport a été généré à l'aide d'un logiciel de reconnaissance vocale.
+sent2=Pour cette raison il pourrait contenir des erreurs grammaticales, orthographiques ou syntaxiques. Nous vous demandons de rester vigilant et de contacter le radiologiste signataire du rapport pour toute problématique jugée significative et/ou nécessitant d'amender le rapport.
+
+
+
+; --- Si le texte est changé, NE PAS TOUCHER le mot du début (textSUG, authorLine, sent1, sent2) et le "="
+; --- Tout écrire sur une ligne, pas de <ENTER>
+
+
+; --- MOTS DE TITRES RADIMAGE À EXLCURE DES TITRES DU RAPPORT ÉCRIT ---
+; --- ÉCRIRE LES MOTS UN APRÈS L'AUTRE, SÉPARÉ PAR DES VIRGULES, SANS ESPACES ---
+; --- ORTHOGRAPHE DOIT ÊTRE LA MÊME QUE DANS RADIMAGE ---
+
+exclusions=renseignements,manipulation,rapport,sein,reconstruction,inj.

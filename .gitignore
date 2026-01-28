@@ -1,0 +1,6 @@
+# Ignore binaries
+RadEdit.exe
+radedit.exe
+
+# Ignore rich text files
+*.rtf
