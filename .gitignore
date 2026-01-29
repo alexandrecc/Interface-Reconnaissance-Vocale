@@ -1,3 +1,4 @@
 # Ignore binary/templates not meant for version control
 *.rtf
-*.exe
+*.exe# Ignore WebView2 runtime cache
+RadEdit.exe.Webview2/
