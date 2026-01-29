@@ -27,7 +27,7 @@ SetTitleMatchMode 2
 OnMessage(WM_COPYDATA, CopyDataHandler)
 
 
-global target := WinExist("ahk_exe RadEdit.exe")    ; or WinExist("RadEdit ahk_exe RadEdit.exe")
+global target := WinExist("RadEdit ahk_exe RadEdit.exe")    ; or WinExist("RadEdit ahk_exe RadEdit.exe")
 if !target {
     MsgBox "RadEdit window not found."
     ExitApp
@@ -242,7 +242,7 @@ PrepareForDictation() {
 
     ; === Boucle de détection de la fenêtre RadEdit ===
     Loop maxTries {
-        target := WinExist("ahk_exe RadEdit.exe")
+        target := WinExist("RadEdit ahk_exe RadEdit.exe")
         if (target)
             break
         Sleep interval
@@ -255,7 +255,7 @@ PrepareForDictation() {
 
     ; === Activation de la fenêtre ===
     WinActivate(target)
-    if WinWaitActive("ahk_exe RadEdit.exe", , 3)
+    if WinWaitActive("RadEdit ahk_exe RadEdit.exe", , 3)
     {
         Send "^!{Right}"
         return
@@ -264,7 +264,7 @@ PrepareForDictation() {
     ; --- Si la première tentative échoue, on temporise et recommence ---
     Sleep 200
     WinActivate(target)
-    if !WinWaitActive("ahk_exe RadEdit.exe", , 3) {
+    if !WinWaitActive("RadEdit ahk_exe RadEdit.exe", , 3) {
         MsgBox "RadEdit introuvable ou inactive après double tentative."
         ExitApp
     }

@@ -226,11 +226,6 @@ if !RegExMatch(txt, "i)^\s*attention\s+(?:à|a)\s+v(?:é|e)rifier\s*$")
     }
 }
 
-IsUrgenceLoc(hwnd) {
-    loc := Trim(GetDataContextVar(hwnd, "loc", ""))
-    locL := StrLower(loc)
-    return (locL = "urgence") || InStr(locL, "urgence")
-}
 
 LogAttVer(titres := [], rootPath := "R:\CSSSNL\Bureautique\Imagerie Medicale\Partage\Suivi Urgence") {
 
@@ -247,7 +242,7 @@ LogAttVer(titres := [], rootPath := "R:\CSSSNL\Bureautique\Imagerie Medicale\Par
     ; 2) Récupérer le NAME du bandeau RadEdit
     name := ""
     try {
-        hwnd := WinExist("ahk_exe RadEdit.exe")
+        hwnd := WinExist("RadEdit ahk_exe RadEdit.exe")
         if (hwnd)
             name := GetNameFromRadEdit(hwnd)
     }

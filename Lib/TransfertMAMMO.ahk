@@ -1,7 +1,7 @@
 BasculerMammo() {
     global CMD, mammoflag, mammodictflag
 
-    target := WinExist("ahk_exe RadEdit.exe")
+    target := WinExist("RadEdit ahk_exe RadEdit.exe")
 
     if (FileExist(mammoflag) || FileExist(mammodictflag)) {
         if FileExist(mammoflag)
@@ -20,7 +20,7 @@ BasculerMammo() {
 SendMAMMOReporttoRadEdit(reqnb_full) {
     global CMD, downloadsDir, target, mammoflag
 
-    target := WinExist("ahk_exe RadEdit.exe")
+    target := WinExist("RadEdit ahk_exe RadEdit.exe")
     if !target {
         MsgBox "Impossible de trouver la fenêtre cible RadEdit.`nAjuste WinExist(...) dans le script de test."
         ExitApp
@@ -554,7 +554,7 @@ PrepareForDictation() {
 
     ; === Boucle de détection de la fenêtre RadEdit ===
     Loop maxTries {
-        target := WinExist("ahk_exe RadEdit.exe")
+        target := WinExist("RadEdit ahk_exe RadEdit.exe")
         if (target)
             break
         Sleep interval
@@ -567,7 +567,7 @@ PrepareForDictation() {
 
     ; === Activation de la fenêtre ===
     WinActivate(target)
-    if WinWaitActive("ahk_exe RadEdit.exe", , 3)
+    if WinWaitActive("RadEdit ahk_exe RadEdit.exe", , 3)
     {
         Send "^!{Right}"
         return
@@ -576,7 +576,7 @@ PrepareForDictation() {
     ; --- Si la première tentative échoue, on temporise et recommence ---
     Sleep 200
     WinActivate(target)
-    if !WinWaitActive("ahk_exe RadEdit.exe", , 3) {
+    if !WinWaitActive("RadEdit ahk_exe RadEdit.exe", , 3) {
         MsgBox "RadEdit introuvable ou inactive après double tentative."
         ExitApp
     }

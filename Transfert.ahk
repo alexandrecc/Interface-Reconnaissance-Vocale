@@ -95,12 +95,12 @@ if WinExist(bloquante) {
     }
 }
 
-
 ; === Step 1: Activer la fenêtre Radimage ===
 if !WinExist("ahk_exe RadImage.exe") {
     MsgBox "Fenêtre Radimage introuvable ou inactive. Le script va se fermer.", 262144
     ExitApp
 }
+
 WinActivate("ahk_exe RadImage.exe")
 WinWaitActive("ahk_exe RadImage.exe",,5)
 
@@ -157,9 +157,9 @@ found := false
     rad_norm := StrReplace(radText, "-") 
 
 ; === Vérification concordance ReqNb ===
-target := WinExist("ahk_exe RadEdit.exe")
+target := WinExist("RadEdit ahk_exe RadEdit.exe")
 if !target {
-    MsgBox "Fenêtre RadEdit introuvable."
+    MsgBox "RadEdit introuvable."
     ExitApp
 }
 
@@ -204,7 +204,6 @@ catch as err {
     ExitApp
 }
 
-
     try {
         _ := ControlGetHwnd(tabCtrl, "ahk_exe RadImage.exe")
         ControlChooseIndex(tabIndex, tabCtrl, "ahk_exe RadImage.exe")  ;tabIndex (default=3, CasExterne=2)
@@ -222,6 +221,7 @@ if !ok {
     ExitApp
 }
 Sleep 20
+
 if !ClickLotCourant() {
     MsgBox "Bouton 'Lot Courant' introuvable. Le script s'arrête."
     ExitApp
@@ -241,7 +241,7 @@ if !WinWaitActive("ahk_exe WINWORD.EXE", , 10) {
 
 ; === Step 3: Check Exam List ===
 
-source := WinExist("ahk_exe RadEdit.exe")
+source := WinExist("RadEdit ahk_exe RadEdit.exe")
 if !source {
     MsgBox "RadEdit window not found."
     ExitApp
@@ -595,10 +595,10 @@ CancelTransfer() {
 
     MsgBox "Vous pouvez maintenant aller continuer votre dictée.", "TERMINÉ", 262144
 
-    if WinExist("ahk_exe RadEdit.exe") {
+    if WinExist("RadEdit ahk_exe RadEdit.exe") {
 	WinActivate
 	}
-    if !WinWaitActive("ahk_exe RadEdit.exe", , 5) {
+    if !WinWaitActive("RadEdit ahk_exe RadEdit.exe", , 5) {
 	MsgBox "RadEdit window not found or not active. Script will exit."
 	ExitApp
     }
@@ -641,13 +641,13 @@ ResetRadEdit(target, tempFile, reqnb_full) {
 
 EraseRadEdit() {
     global CMD, reqnb_title
-    target := WinExist("ahk_exe RadEdit.exe")
+    target := WinExist("RadEdit ahk_exe RadEdit.exe")
     if !target {
         MsgBox "RadEdit introuvable.", "Erreur", 262144
         return
     }
-    WinActivate "ahk_exe RadEdit.exe"
-    WinWaitActive "ahk_exe RadEdit.exe", , 1
+    WinActivate "RadEdit ahk_exe RadEdit.exe"
+    WinWaitActive "RadEdit ahk_exe RadEdit.exe", , 1
 
     reqnb_title := GetTitleFromRadEdit(target)
 
@@ -747,7 +747,7 @@ RensMaj(doc) {
 }
 
 GotoEndofText(){
-	target := WinExist("ahk_exe RadEdit.exe")
+	target := WinExist("RadEdit ahk_exe RadEdit.exe")
 	if !target {
 	    MsgBox("❌ RadEdit non trouvé.")
  	   ExitApp()
@@ -778,14 +778,14 @@ Basculer() {
 PauseSynchro() {
     if FileExist(flagFile) {
         FileDelete(flagFile)
-        target := WinExist("ahk_exe RadEdit.exe")
+        target := WinExist("RadEdit ahk_exe RadEdit.exe")
         ;SendCopyData(target, CMD["SetText"], "{\rtf1\ansi}")	
         SendCopyData(target, CMD["SetName"], "")
         ;SendCopyData(target, CMD["SetTitle"], "")
     }
     else {
         FileAppend("", flagFile) 
-        target := WinExist("ahk_exe RadEdit.exe")
+        target := WinExist("RadEdit ahk_exe RadEdit.exe")
         SendCopyData(target, CMD["SetName"], "PAUSE SYNCHRO RADEDIT")
         ;SendCopyData(target, CMD["SetText"], "{\rtf1\ansi}")	
         ;SendCopyData(target, CMD["SetTitle"], "")
@@ -793,7 +793,7 @@ PauseSynchro() {
 }
 
 Pause() {
-    target := WinExist("ahk_exe RadEdit.exe")
+    target := WinExist("RadEdit ahk_exe RadEdit.exe")
     if !ProcessExist("FusionDictate.exe")
         Run '"C:\APP\Fusion_StartUp\startup_imagerie.cmd"', , "Hide"
     SendCopyData(target, CMD["SetName"], "PAUSE SYNCHRO RADEDIT - SYNCHRO FUSION ACTIF")
@@ -803,7 +803,7 @@ Pause() {
 }
 
 Resume() {
-    target := WinExist("ahk_exe RadEdit.exe")
+    target := WinExist("RadEdit ahk_exe RadEdit.exe")
     SendCopyData(target, CMD["SetText"], "{\rtf1\ansi}")	
     SendCopyData(target, CMD["SetName"], "")
     SendCopyData(target, CMD["SetTitle"], "")
