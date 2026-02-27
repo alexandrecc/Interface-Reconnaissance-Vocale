@@ -1,9 +1,10 @@
 #Requires AutoHotkey v2
 
-#Include <TransfertTAFD>
 #Include <AmenderRapport>
 #Include <FinalTextInserts>
 #Include <CheckExam>
+#Include <AppendLogFiles>
+#Include <GetData>
 
 WM_COPYDATA := 0x004A
 CMD := Map(
@@ -19,6 +20,10 @@ global reqnb_norm := ""
 global reqnb_full := ""
 global data_context_json := ""
 global reqnb_title := ""
+
+global g_dcRaw := ""          ; JSON brut en mémoire
+global g_dcCache := Map()     ; Map(key -> value)
+global g_dcHwnd := 0          ; hwnd associé au cache
 
 OnMessage(WM_COPYDATA, CopyDataHandler)
 textFile := ".\Textes\Insertions\textesRapport.txt"
@@ -163,8 +168,17 @@ if !target {
     ExitApp
 }
 
+PrimeDataContextCached(target)
+
+formcomplete := Trim(GetDataContextVarCached(target, "formcomplete", ""))
+if (formcomplete = "false") {
+    MsgBox "Le rapport n'a pas été généré par le formulaire."
+    ExitApp
+}
+
 try {
-    reqnb_full := GetTitleFromRadEdit(target)
+    ;reqnb_full := GetTitleFromRadEdit(target)
+    reqnb_full := Trim(GetDataContextVarCached(target, "reqnb", ""))
     if (reqnb_full = "") {
         if ProcessExist("FusionDictate.exe") {
 	    SendCopyData(target, CMD["SetText"], "{\rtf1\ansi}")
@@ -175,6 +189,7 @@ try {
         }
     }
     reqnb_norm := SubStr(reqnb_full, -8)  
+
     if (reqnb_norm != rad_norm) {
         result := MsgBox(
             "La requête de l'examen actif ne correspond pas à la requête de l'examen dicté.`n"
@@ -248,7 +263,12 @@ if !source {
 }
 
 SendCopyData(source, CMD["CleanUpEnd"], "")
-SendCopyData(source, CMD["FixFont"], "Arial;10")
+
+keepfont := Trim(GetDataContextVarCached(target, "keepfont", ""))
+if (keepfont != "true") {
+    SendCopyData(source, CMD["FixFont"], "Arial;10")
+}
+
 
 SendCopyData(source, CMD["RequestTemp"], '{ "stripHiddenMarkers": true }')
 
@@ -271,25 +291,17 @@ catch {
 }
 
 doc := word.ActiveDocument
-result := CheckExamList(doc, report_file)  ; contient maintenant result.examType
+result := CheckExamList(doc, report_file)  
 
 undo := word.UndoRecord
 oldSU := word.ScreenUpdating
 word.ScreenUpdating := False
 undo.StartCustomRecord("TransfertRapport")
 
-try {
-    switch result.examType {
-        case "TAFD":
-            TransfertTAFD(word, doc, report_file, mode)
+TransfertStandard(word, doc, report_file, result, mode)
 
-        default:
-            TransfertStandard(word, doc, report_file, result, mode)
-    }
-} finally {
-    undo.EndCustomRecord()
-    word.ScreenUpdating := oldSU
-}
+undo.EndCustomRecord()
+word.ScreenUpdating := oldSU
 
 ResetRadEdit(target, report_file, reqnb_full)
 
@@ -309,6 +321,7 @@ TransfertStandard(word, doc, report_file, result, mode) {
     }
 
     RensMaj(doc)
+    CapitalizeParagraphStarts(doc)
 
     attv := HasArg("AttV")
 
@@ -321,16 +334,7 @@ TransfertStandard(word, doc, report_file, result, mode) {
         didAttVer := true
     }
 
-    if (didAttVer) {
-    global target
-
-    loc := Trim(GetDataContextVar(target, "loc", ""))
-    modal := Trim(GetDataContextVar(target, "modal", ""))
-
-    if (StrLower(loc) = "urgence" && StrUpper(modal) = "CR")
-    LogAttVer(result.titres)
-    }
-
+    LogFile(target, result, didAttVer)
     AddText(mode)
 }
 
@@ -391,16 +395,6 @@ if !WinWaitActive("ahk_exe RadImage.exe", , 5) {
 Send "{F2}"
 }
 
-GetTextByKey(filePath, key, default:="") {
-    if !FileExist(filePath)
-        return default
-    For line in StrSplit(FileRead(filePath, "UTF-8"), "`n", "`r") {
-        parts := StrSplit(line, "=")
-        if (parts.Length >= 2 && parts[1] = key)
-            return Trim(parts[2])
-    }
-    return default
-}
 
 ClickLotCourant() {
     win := "ahk_exe RadImage.exe"
@@ -482,61 +476,6 @@ CopyDataHandler(wParam, lParam, msg, hwnd) {
     return true
 }
 
-GetDataContextRaw(hwnd, timeout := 800) {
-    global CMD, data_context_json
-
-    data_context_json := ""  ; IMPORTANT: évite un vieux contexte
-    SendCopyData(hwnd, CMD["GetDataContext"], "")
-
-    t0 := A_TickCount
-    while (data_context_json = "" && A_TickCount - t0 < timeout)
-        Sleep 20
-
-    return data_context_json
-}
-
-GetDataContextVar(hwnd, key, default := "", timeout := 800) {
-    raw := GetDataContextRaw(hwnd, timeout)
-    if (raw = "")
-        return default
-
-    ; 1) JSON simple: "loc":"Urgence"
-    patt := '"\Q' key '\E"\s*:\s*"(.*?)"'
-    if RegExMatch(raw, patt, &m)
-        return m[1]
-
-    ; 2) fallback key=value (si jamais ton DataContext est sous cette forme)
-    patt2 := "im)^\s*\Q" key "\E\s*=\s*(.+?)\s*$"
-    if RegExMatch(raw, patt2, &m2)
-        return m2[1]
-
-    return default
-}
-
-
-GetTitleFromRadEdit(hwnd) {
-    global reqnb_title
-    reqnb_title := ""   ; reset
-
-    SendCopyData(hwnd, 9, "")  ; 9 = GetTitle
-
-    t0 := A_TickCount
-    while (reqnb_title = "" && A_TickCount - t0 < 1000)
-        Sleep 20
-
-    return reqnb_title
-}
-
-GetNameFromRadEdit(hwnd) {
-    global reqnb_name
-    reqnb_name := ""                  ; reset
-    SendCopyData(hwnd, 12, "")        ; 12 = GetName
-    t0 := A_TickCount
-    while (reqnb_name = "" && A_TickCount - t0 < 1000)
-        Sleep 20
-    return reqnb_name
-}
-
 SendCopyData(hwnd, command, text := "") {
     text := text . Chr(0)
     buf := Buffer(StrLen(text) * 2, 0)
@@ -547,31 +486,6 @@ SendCopyData(hwnd, command, text := "") {
     NumPut("Ptr", buf.Ptr, cds, 2 * A_PtrSize)
     return DllCall("user32\SendMessageW", "Ptr", hwnd, "UInt", WM_COPYDATA, "Ptr", A_ScriptHwnd, "Ptr", cds.Ptr, "Ptr")
 }
-
-GetWordsByKey(filePath, key, defaults := []) {
-    ; --- Si le fichier n’existe pas : retourner la liste par défaut ---
-    if !FileExist(filePath)
-        return defaults
-
-    ; --- Lire et chercher la clé ---
-    For line in StrSplit(FileRead(filePath, "UTF-8"), "`n", "`r") {
-        parts := StrSplit(line, "=")
-        if (parts.Length >= 2 && parts[1] = key) {
-            ; Séparer les mots par virgule, point-virgule ou espace
-            cleaned := Trim(parts[2])
-            if (cleaned = "")
-                return defaults
-            words := []
-            For w in StrSplit(cleaned, ",")
-                if (Trim(w) != "")
-                    words.Push(StrLower(Trim(w)))
-            return words
-        }
-    }
-    ; --- Si la clé n’a pas été trouvée ---
-    return defaults
-}
-
 
 
 SendToRadImage(key) {
@@ -626,7 +540,7 @@ ResetRadEdit(target, tempFile, reqnb_full) {
     ; 3) Supprimer les HTML temporaires associés (RadEdit_<safeReqnb>_*.html)
     if (reqnb_full != "") {
         safeReqnb := RegExReplace(reqnb_full, "[^\w-]", "_")
-        pattern := A_Temp "\RadEdit_" safeReqnb "_*.html"
+        pattern := A_ScriptDir "\Textes\HTML\RadEdit_" safeReqnb "*.html"
 
         try {
             Loop Files, pattern {
@@ -745,6 +659,54 @@ RensMaj(doc) {
         ; MsgBox "RensMaj err:`n" err.Message
     }
 }
+
+CapitalizeParagraphStarts(doc, maxScan := 40) {
+    wdUpperCase := 1
+    paras := doc.Paragraphs
+    count := paras.Count
+
+    Loop count {
+        para := paras.Item(A_Index)
+        r := para.Range.Duplicate
+
+        ; Paragraphe vide / juste un retour
+        if (r.End - r.Start <= 1)
+            continue
+
+        ; Retirer le marqueur de paragraphe final (`r)
+        r.End -= 1
+
+        start := r.Start
+        end   := r.End
+        if (end <= start)
+            continue
+
+        sampleEnd := start + maxScan
+        if (sampleEnd > end)
+            sampleEnd := end
+
+        ; Lire juste le début du paragraphe (1 call COM)
+        sample := doc.Range(start, sampleEnd).Text
+        if (sample = "")
+            continue
+
+        ; Trouver la première LETTRE (pas chiffre) dans le sample
+	if !RegExMatch(sample, "\p{L}", &m)
+    	    continue
+
+        ; Position absolue de cette lettre dans le document Word
+        pos := start + (m.Pos[0] - 1)
+
+        chR := doc.Range(pos, pos + 1)
+        ch  := chR.Text
+
+        ; Si minuscule -> majuscule (1 seule lettre)
+        if RegExMatch(ch, "^\p{Ll}$")
+            chR.Case := wdUpperCase
+    }
+}
+
+
 
 GotoEndofText(){
 	target := WinExist("RadEdit ahk_exe RadEdit.exe")

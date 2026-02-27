@@ -4,14 +4,6 @@ CheckExamList(doc, report_file) {
     exclusions := GetWordsByKey(textFile, "exclusions", defaultExcl)
     titres := []
 
-    ; Nouveau : type d’examen détecté
-    examType := "Standard"
-
-    ; Flags pour OBST
-    seenObstMorpho  := false
-    seenObstCrois   := false
-    ;seenDopplerObst := false
-
     ; --- Étape 1 : Extraire titres de WordRadimage ---
     paras := doc.Paragraphs
     count := paras.Count
@@ -35,49 +27,7 @@ CheckExamList(doc, report_file) {
 
         if !exclu {
             titres.Push(txt)
-
-            txtNorm := StrReplace(txt, Chr(160), " ")
-            txtNorm := Trim(txtNorm, " `t`r`n")
-
-            ; --- 1) TAFD : si vu, on sort immédiatement ---
-            if (txtNorm = "TDM DEPISTAGE CANCER POUMONS FAIBLE DOSE C-") {
-                examType := "TAFD"
-                return { titres: titres, missing: [], needAttVer: false, examType: examType }
-            }
-
-            ; --- 2) OBST Doppler ---
-            ;if (txtNorm = "DOPPLER EVALUATION DE RETARD DE CROISSANCE") {
-            ;    seenDopplerObst := true
-            ;}
-
-            ; --- 3) Echo OBST MORPHO ---
-            if (txtNorm = "ECHO OBSTETRICALE 16 SEM ET PLUS(MORPHO)") {
-                seenObstMorpho := true
-            }
-
-            ; --- 4) Echo OBST CROISSANCE ---
-            if (txtNorm = "ECHO OBSTETRICALE 16 SEM ET PLUS(CROISSANCE)"
-             || txtNorm = "ECHO OBSTETRICALE 16 SEM ET PLUS(CROISSANCE) (T)") {
-                seenObstCrois := true
-            }
         }
-    }
-
-    ; --- Déterminer examType à la fin de la boucle ---
-    if (seenObstCrois) {
-        examType := "OBST_Crois"
-    } else if (seenObstMorpho) {
-        examType := "OBST_Morpho"
-    } else {
-        examType := "Standard"
-    }
-
-    ; Si examen OBST, on sort tout de suite comme pour TAFD
-    if (examType = "OBST_Morpho"
-     || examType = "OBST_Crois") {
-     ;|| examType = "OBST_Doppler"
-     ;|| examType = "OBST_Crois_Doppler") {
-        return { titres: titres, missing: [], needAttVer: false, examType: examType }
     }
 
     ; --- Étape 2 : Lire directement le contenu RTF (rapide et sans Word) ---
@@ -86,41 +36,40 @@ CheckExamList(doc, report_file) {
     } catch as err {
         MsgBox "Impossible de lire le fichier temporaire :`n" report_file "`n`nErreur : " err.Message, "Erreur critique", 262144
         CancelTransfer()
-        return { titres: titres, missing: [], needAttVer: false, examType: examType }
+        return { titres: titres, missing: [], needAttVer: false }
     }
 
-; --- Décodage des séquences RTF \'xx -> caractère ---
-rawText := DecodeRTFHex(rawText)
+    ; --- Décodage des séquences RTF \'xx -> caractère ---
+    rawText := DecodeRTFHex(rawText)
 
-; (optionnel, si un jour tu vois des \u2019, \u00E9, etc.)
-; rawText := DecodeRTFUnicode(rawText)
+    ; (optionnel, si un jour tu vois des \u2019, \u00E9, etc.)
+    ; rawText := DecodeRTFUnicode(rawText)
 
-; --- Nettoyage des balises RTF (tes lignes existantes) ---
-rawText := StrReplace(rawText, "{\par", "`n")
-rawText := RegExReplace(rawText, "\\[a-z0-9]+(?:-?\d+)?[ ]?", "")
-rawText := RegExReplace(rawText, "\{\\[^}]+\}", "")
-rawText := RegExReplace(rawText, "[{}]", "")
-rawText := RegExReplace(rawText, "[\x00-\x08\x0B-\x1F]", "")
+    ; --- Nettoyage des balises RTF (tes lignes existantes) ---
+    rawText := StrReplace(rawText, "{\par", "`n")
+    rawText := RegExReplace(rawText, "\\[a-z0-9]+(?:-?\d+)?[ ]?", "")
+    rawText := RegExReplace(rawText, "\{\\[^}]+\}", "")
+    rawText := RegExReplace(rawText, "[{}]", "")
+    rawText := RegExReplace(rawText, "[\x00-\x08\x0B-\x1F]", "")
 
-; Séparer en lignes (paragraphes)
-lines := []
-for l in StrSplit(rawText, ["`r`n", "`n", "`r"]) {
-    l := Trim(l, "`r`n `t")
-    if (l != "")
-        lines.Push(l)
-}
+    ; Séparer en lignes (paragraphes)
+    lines := []
+    for l in StrSplit(rawText, ["`r`n", "`n", "`r"]) {
+        l := Trim(l, "`r`n `t")
+        if (l != "")
+            lines.Push(l)
+    }
 
-; --- Détection stricte "Attention à vérifier" (insensible à la casse) ---
-needAttVer := false
-if (lines.Length > 0) {
-    last := lines[lines.Length]
-    last := StrReplace(last, Chr(160), " ")   ; NBSP -> espace, au cas où
-    last := Trim(last, "`r`n `t")             ; on tolère juste espaces/retours
+    ; --- Détection stricte "Attention à vérifier" (insensible à la casse) ---
+    needAttVer := false
+    if (lines.Length > 0) {
+        last := lines[lines.Length]
+        last := StrReplace(last, Chr(160), " ")   ; NBSP -> espace, au cas où
+        last := Trim(last, "`r`n `t")             ; on tolère juste espaces/retours
 
-    if RegExMatch(last, "i)^\s*Attention à vérifier\s*$")
-        needAttVer := true
-}
-
+        if RegExMatch(last, "i)^\s*Attention à vérifier\s*$")
+            needAttVer := true
+    }
 
     ; --- Étape 3 : Vérification ---
     missing := []
@@ -143,50 +92,48 @@ if (lines.Length > 0) {
             missing.Push(titre)
     }
 
-   ; --- Étape 4 : Si manquants, proposer options (fenêtre + touche 1/2/3) ---
-if (missing.Length > 0) {
-    total := titres.Length
-    nbMiss := missing.Length
+    ; --- Étape 4 : Si manquants, proposer options (fenêtre + touche 1/2/3) ---
+    if (missing.Length > 0) {
+        total := titres.Length
+        nbMiss := missing.Length
 
-    msg := "Ces examens sont absents de votre dictée :" . "`n`n"
-    for titre in missing
-        msg .= "- " titre . "`n"
+        msg := "Ces examens sont absents de votre dictée :" . "`n`n"
+        for titre in missing
+            msg .= "- " titre . "`n"
 
-    msg .= "`n" . "Choisissez l'option appropriée :" . "`n`n"
-    msg .= "1 - Continuer (ignorer et poursuivre)" . "`n`n"
-    msg .= "2 - Retour à la dictée (annuler le transfert)" . "`n`n"
-    msg .= "3 - Insérer le(s) titre(s) manquant(s)"
+        msg .= "`n" . "Choisissez l'option appropriée :" . "`n`n"
+        msg .= "1 - Continuer (ignorer et poursuivre)" . "`n`n"
+        msg .= "2 - Retour à la dictée (annuler le transfert)" . "`n`n"
+        msg .= "3 - Insérer le(s) titre(s) manquant(s)"
 
-    dlg := Gui("+AlwaysOnTop", "Rapport incomplet")
-    dlg.SetFont("s12 bold", "Segoe UI")    
-    dlg.Add("Text", "w500 h500", msg)
-    dlg.Show()
+        dlg := Gui("+AlwaysOnTop", "Rapport incomplet")
+        dlg.SetFont("s12 bold", "Segoe UI")
+        dlg.Add("Text", "w500 h500", msg)
+        dlg.Show()
 
-    ih := InputHook("L1")
-    ih.Start()
-    ih.Wait()
-    choice := ih.Input
+        ih := InputHook("L1")
+        ih.Start()
+        ih.Wait()
+        choice := ih.Input
 
-    dlg.Destroy()
+        dlg.Destroy()
 
         if (choice = "1") {
-        return { titres: titres, missing: []            , needAttVer: needAttVer, examType: examType }
-    } else if (choice = "2") {
-        CancelTransfer()
-        return { titres: titres, missing: []            , needAttVer: needAttVer, examType: examType }
-    } else if (choice = "3") {
-        return { titres: titres, missing: missing       , needAttVer: needAttVer, examType: examType }
-    } else {
-        CancelTransfer()
-        return { titres: titres, missing: []            , needAttVer: needAttVer, examType: examType }
+            return { titres: titres, missing: [],      needAttVer: needAttVer }
+        } else if (choice = "2") {
+            CancelTransfer()
+            return { titres: titres, missing: [],      needAttVer: needAttVer }
+        } else if (choice = "3") {
+            return { titres: titres, missing: missing, needAttVer: needAttVer }
+        } else {
+            CancelTransfer()
+            return { titres: titres, missing: [],      needAttVer: needAttVer }
+        }
     }
 
-
+    return { titres: titres, missing: [], needAttVer: needAttVer }
 }
 
-return { titres: titres, missing: [], needAttVer: needAttVer, examType: examType }
-
-}
 
 
 InsertMissingTitles(doc, report_file, titres, missing) {

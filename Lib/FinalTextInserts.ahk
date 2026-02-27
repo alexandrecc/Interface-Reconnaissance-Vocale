@@ -62,27 +62,6 @@ AddText(mode := "") {
 
 }
 
-GetFullName_API() {
-    NameDisplay := 3
-    len := 256
-    buf := Buffer(len * 2)  ; UTF-16
-
-    ok := DllCall("Secur32\GetUserNameExW"
-                , "Int",  NameDisplay
-                , "Ptr",  buf.Ptr
-                , "UInt*", len)
-
-    if ok {
-        name := StrGet(buf.Ptr, "UTF-16")
-	name := RegExReplace(name, "\d+")    ; <-- AJOUT: enlève les chiffres
-        parts := StrSplit(name, " ")
-        if parts.Length = 2
-            return parts[2] " " parts[1]  ; Inverse : Prénom Nom
-        return name
-    }
-
-    return ""
-}
 
 AddFinalRtf(doc, sel, finalRtfPath := "") {
     global finalRtf, finalRtfSUG, textFile
@@ -223,51 +202,6 @@ if !RegExMatch(txt, "i)^\s*attention\s+(?:à|a)\s+v(?:é|e)rifier\s*$")
         r2.InsertParagraphAfter()
         paras := doc.Paragraphs
         paras.Item(paras.Count).Alignment := AlignLeft
-    }
-}
-
-
-LogAttVer(titres := [], rootPath := "R:\CSSSNL\Bureautique\Imagerie Medicale\Partage\Suivi Urgence") {
-
-    global reqnb_full
-    
-    ; 1) S’assurer du dossier
-    try {
-        if !DirExist(rootPath)
-            DirCreate(rootPath)
-    } catch as err {
-        return false
-    }
-
-    ; 2) Récupérer le NAME du bandeau RadEdit
-    name := ""
-    try {
-        hwnd := WinExist("RadEdit ahk_exe RadEdit.exe")
-        if (hwnd)
-            name := GetNameFromRadEdit(hwnd)
-    }
-
-    if (name = "")
-        name := "(NAME inconnu)"
-
-    reqTxt := (reqnb_full != "" ? reqnb_full : "(ReqNb inconnu)")
-
-    ; 3) Construire le bloc texte
-    ts := FormatTime(A_Now, "yyyy-MM-dd HH:mm:ss")
-    buf := reqTxt " - " name "  —  Date de lecture: " ts "`r`n"
-    if (IsObject(titres) && titres.Length > 0) {
-        for t in titres
-            buf .= "- " t "`r`n"
-    }
-    buf .= "----------------------------------------`r`n"
-
-    ; 4) Append dans le fichier log
-    logFile := rootPath "\ATTENTION À VÉRIFIER.txt"   ; nom exact demandé
-    try {
-        FileAppend(buf, logFile, "UTF-8")
-        return true
-    } catch as err {
-        return false
     }
 }
 

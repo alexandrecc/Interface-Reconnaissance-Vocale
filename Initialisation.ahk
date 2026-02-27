@@ -1,5 +1,7 @@
 ﻿#Requires AutoHotkey v2.0
 
+#Include <GetData>
+
 WM_COPYDATA := 0x004A
 CMD := Map(
   "SetText",1, "InsertText",2, "SetFile",3, "InsertFile",4, "RequestTemp",5,
@@ -75,12 +77,14 @@ if (A_Args.Length == 8) {
     }
 
     SendCopyData(target, CMD["FixFont"], "Arial;10")
+    SendCopyData(target, CMD["SetDataContext"], "")
 
+    htmlDir := A_ScriptDir "\Textes\HTML"
     safeReqnb := RegExReplace(reqnb, "[^\w-]", "_")
-    htmlPath := A_Temp "\RadEdit_" safeReqnb "_" safeProc ".html"
+    savedHtml := htmlDir "\RadEdit_" safeReqnb "_" safeProc ".html"
 
-    if FileExist(htmlPath) {
-        SendCopyData(target, CMD["SetHtmlFile"], htmlPath)
+    if FileExist(savedHtml) {
+        SendCopyData(target, CMD["SetHtmlFile"], savedHtml)
     } else {
         htmlNew := SelectHtmlTemplate(modal, safeProc)
         if (htmlNew != "") {
@@ -122,15 +126,25 @@ InitRadEdit(target, reqnb, patdos, patnom, modal, loc, safeProc) {
         while (report_file = "" && (A_TickCount - t0 < 1000))
             Sleep 20
 
-        ; --- FUTUR (à activer quand RadEdit ignorera RequestHtmlFile si HTML non actif
-        ;           ET retournera quand même une réponse) ---
-        ; oldSafeProc := ""  ; TODO: lire dataContext.safeproc (ancien examen) depuis RadEdit
-        ; html_file := "" ;à sauvegarder dans le répertoire html si on veux que les liens fonctionnent
-        ; SendCopyData(target, CMD["RequestHtmlFile"], "RadEdit_" safeOld "_" oldSafeProc ".html")
-        ; t1 := A_TickCount
-        ; while (html_file = "" && (A_TickCount - t1 < 1000))
-        ;     Sleep 20
+        htmlsave := Trim(GetDataContextVar(target, "htmlsave", ""))
+        if (htmlsave = "true") {
+            ; --- Sauvegarder l'ancien HTML (si HTML actif) dans \Textes\HTML ---
+            oldSafeProc := Trim(GetDataContextVar(target, "safeproc", ""))
+            oldSafeProc := SanitizeFileName(oldSafeProc)
+            if (oldSafeProc = "")
+               oldSafeProc := "Unknown"
 
+            htmlDir := A_ScriptDir "\Textes\HTML"
+    
+            global html_file := ""  ; reset (important)
+            oldHtmlPath := htmlDir "\RadEdit_" safeOld "_" oldSafeProc ".html"
+
+            SendCopyData(target, CMD["RequestHtmlFile"], oldHtmlPath)
+
+            t1 := A_TickCount
+            while (html_file = "" && (A_TickCount - t1 < 2500))
+                Sleep 20 
+            }
     }
 
     safeReqnb := RegExReplace(reqnb, "[^\w-]", "_")
@@ -142,7 +156,7 @@ InitRadEdit(target, reqnb, patdos, patnom, modal, loc, safeProc) {
         Sleep 50                                                ; laisse le temps de charger
         SendCopyData(target, CMD["SetTitle"], reqnb)            ; MAJ bandeau gauche
         SendCopyData(target, CMD["SetName"],  patdos " - " StrUpper(patnom))
-	
+
         ; --- Vérifie si le proc est déjà présent dans le RTF ---
         skipCorps := false
         try rtfText := FileRead(tempPath, "CP1252")
@@ -186,7 +200,8 @@ InitRadEdit(target, reqnb, patdos, patnom, modal, loc, safeProc) {
 	if !IsSRJ(loc) {
         if !InsertFileIfExists(PATH "Avant-titre\" modal "_" safeProc ".rtf")
             if !InsertFileIfExists(PATH "Avant-titre\" modal "_" loc ".rtf")
-                InsertFileIfExists(PATH "Avant-titre\Default.rtf")
+                if !InsertFileIfExists(PATH "Avant-titre\" modal ".rtf")
+                    InsertFileIfExists(PATH "Avant-titre\Default.rtf")
 	}
 	return false
     }
@@ -271,18 +286,7 @@ PrepareForDictation() {
 
     Send "^!{Right}"
 }
-GetTitleFromRadEdit(hwnd) {
-    global reqnb_title
-    reqnb_title := ""   ; reset
 
-    SendCopyData(hwnd, CMD["GetTitle"], "")
-
-    t0 := A_TickCount
-    while (reqnb_title = "" && (A_TickCount - t0 < 1000))
-        Sleep 20
-
-    return reqnb_title
-}
 
 EraseTempFile(reqnb) {
     tempFile := A_Temp "\RadEdit_" reqnb ".rtf"
@@ -330,8 +334,6 @@ BuildInitContextJson(proc, modal, loc, first, reqnb, patdos, patnom, dateexam) {
     ; IMPORTANT: payload "replace" attendu par RadEdit:
     ; {"__mode":"replace","data":{...}}
     return "{"
-        . '"__mode":"replace",'
-        . '"data":{'
         . '"proc":"'      JsonEscape(proc)      '",'
         . '"modal":"'     JsonEscape(modal)     '",'
         . '"loc":"'       JsonEscape(loc)       '",'
@@ -341,23 +343,23 @@ BuildInitContextJson(proc, modal, loc, first, reqnb, patdos, patnom, dateexam) {
         . '"patnom":"'    JsonEscape(patnom)    '",'
         . '"safeproc":"'  JsonEscape(safeproc)  '",'
         . '"studydate":"' JsonEscape(studydate) '"'
-        . "}}"
+        . "}"
 }
 
 SelectHtmlTemplate(modal, safeProc) {
     global PATH
 
-    p1 := PATH "HTML\" modal "\" safeProc ".html"
-    if FileExist(p1)
-        return p1
+    ;p1 := PATH "HTML\" modal "\" safeProc ".html"
+    ;if FileExist(p1)
+    ;    return p1
 
     p2 := PATH "HTML\" safeProc ".html"
     if FileExist(p2)
         return p2
 
-    ;p3 := PATH "HTML\" modal ".html"
-    ;if FileExist(p3)
-    ;    return p3
+    p3 := PATH "HTML\" modal ".html"
+    if FileExist(p3)
+        return p3
 
     p4 := PATH "HTML\Default.html"
     if FileExist(p4)
@@ -366,22 +368,3 @@ SelectHtmlTemplate(modal, safeProc) {
     return ""
 }
 
-GetStudyDate(dateexam) {
-    ; Retourne "JJ/MM/AAAA" ou "" si format non reconnu
-
-    dateexam := Trim(dateexam)
-
-    ; 1) Format ISO: YYYY-MM-DD (ex: 2025-10-22)
-    if RegExMatch(dateexam, "^\s*(\d{4})-(\d{2})-(\d{2})", &m) {
-        y  := m[1], mo := m[2], d := m[3]
-        return Format("{:02}/{:02}/{}", d, mo, y)
-    }
-
-    ; 2) Format US: MM/DD/YYYY (ex: 10/22/2025)
-    if RegExMatch(dateexam, "^\s*(\d{1,2})/(\d{1,2})/(\d{4})", &m) {
-        mo := m[1], d := m[2], y := m[3]
-        return Format("{:02}/{:02}/{}", d, mo, y)
-    }
-
-    return ""
-}
