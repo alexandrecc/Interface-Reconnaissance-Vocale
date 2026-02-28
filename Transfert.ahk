@@ -5,6 +5,8 @@
 #Include <CheckExam>
 #Include <AppendLogFiles>
 #Include <GetData>
+#Include <TransferShared>
+#Include <TransferBridgeProtocol>
 
 WM_COPYDATA := 0x004A
 CMD := Map(
@@ -35,7 +37,7 @@ global downloadsDir := EnvGet("USERPROFILE") "\Downloads"
 SetTitleMatchMode 2
 
 if A_Args.Length = 0 {
-    MsgBox "Aucun Argument fourni. Utiliser Ouvrir, Fermer, Tout, Signer ou Reculer."
+    MsgBox "Aucun Argument fourni. Utiliser Ouvrir, Fermer, Tout, ToutCitrix, Signer ou Reculer."
     ExitApp
 }
 
@@ -57,6 +59,8 @@ switch arg {
     case "ToutSUG":
 	Ouvrir("ToutSUG")
 	Fermer()
+    case "ToutCitrix":
+        ToutCitrix()
     case "Signer":
         Signer()
     case "Reculer":
@@ -80,7 +84,7 @@ switch arg {
 	Fermer()
 	Signer()
     default:
-        MsgBox "Invalid argument: " arg "`nUse Ouvrir, Fermer, Tout, Signer or Reculer."
+        MsgBox "Invalid argument: " arg "`nUse Ouvrir, Fermer, Tout, ToutCitrix, Signer or Reculer."
 }
 
 ExitApp
@@ -338,6 +342,215 @@ TransfertStandard(word, doc, report_file, result, mode) {
     AddText(mode)
 }
 
+ToutCitrix() {
+    global CMD, report_file, reqnb_full
+    mode := "ToutCitrix"
+
+    source := WinExist("RadEdit ahk_exe RadEdit.exe")
+    if !source {
+        MsgBox "RadEdit introuvable."
+        ExitApp
+    }
+
+    PrimeDataContextCached(source)
+    formcomplete := Trim(GetDataContextVarCached(source, "formcomplete", ""))
+    if (formcomplete = "false") {
+        MsgBox "Le rapport n'a pas été généré par le formulaire."
+        ExitApp
+    }
+
+    reqnb_full := Trim(GetDataContextVarCached(source, "reqnb", ""))
+    if (reqnb_full = "") {
+        MsgBox "Impossible de récupérer la requête depuis RadEdit."
+        ExitApp
+    }
+
+    SendCopyData(source, CMD["CleanUpEnd"], "")
+    keepfont := Trim(GetDataContextVarCached(source, "keepfont", ""))
+    if (keepfont != "true")
+        SendCopyData(source, CMD["FixFont"], "Arial;10")
+
+    report_file := ""
+    SendCopyData(source, CMD["RequestTemp"], '{ "stripHiddenMarkers": true }')
+    if !WaitForRadEditTempFile(2000) {
+        MsgBox "RadEdit n'a pas retourné de fichier temporaire pour le transfert Citrix."
+        ExitApp
+    }
+
+    bridgeRoot := ResolveBridgeRoot()
+    meta := BuildCitrixTransferMeta(source, mode)
+
+    try job := BridgeCreateJobFromFile(bridgeRoot, meta, report_file)
+    catch as err {
+        MsgBox "Impossible de créer la tâche Citrix.`n`nErreur: " err.Message
+        ExitApp
+    }
+
+    AttachCitrixJobArtifacts(job["jobDir"], mode, meta)
+    WriteCitrixNextJobHint(bridgeRoot, job["jobId"])
+
+    TriggerCitrixTransferHotkey()
+
+    result := WaitForBridgeTerminal(job["jobDir"], 90000)
+    status := result.Has("status") ? result["status"] : "timeout"
+
+    if (status = "done") {
+        ResetRadEdit(source, report_file, reqnb_full)
+        return
+    }
+
+    if (status = "error") {
+        msg := result.Has("message") ? result["message"] : "Erreur Citrix inconnue."
+        code := result.Has("errorCode") ? result["errorCode"] : "UNKNOWN"
+        MsgBox "Le transfert Citrix a échoué.`nCode: " code "`nMessage: " msg
+        ExitApp
+    }
+
+    MsgBox "Aucune réponse Citrix après 90 secondes.`nLa tâche est conservée dans:`n" job["jobDir"]
+    ExitApp
+}
+
+WaitForRadEditTempFile(timeoutMs := 1200) {
+    global report_file
+    deadline := A_TickCount + timeoutMs
+    while (A_TickCount < deadline) {
+        if (report_file != "" && FileExist(report_file))
+            return true
+        Sleep 40
+    }
+    return false
+}
+
+ResolveBridgeRoot() {
+    envPath := Trim(EnvGet("RADEDITSYNC_DIR"))
+    if (envPath != "")
+        return envPath
+
+    return "\\regional.reg14.rtss.qc.ca\app\DragonMedicalOne\Radiologie\Test Citrix"
+}
+
+BuildCitrixTransferMeta(source, mode := "ToutCitrix") {
+    global reqnb_full, g_dcRaw
+
+    keepfont := Trim(GetDataContextVarCached(source, "keepfont", ""))
+    meta := Map(
+        "mode", mode,
+        "reqnb", reqnb_full,
+        "patdos", Trim(GetDataContextVarCached(source, "patdos", "")),
+        "patnom", Trim(GetDataContextVarCached(source, "patnom", "")),
+        "proc", Trim(GetDataContextVarCached(source, "proc", "")),
+        "modal", Trim(GetDataContextVarCached(source, "modal", "")),
+        "loc", Trim(GetDataContextVarCached(source, "loc", "")),
+        "studydate", Trim(GetDataContextVarCached(source, "studydate", "")),
+        "stripHiddenMarkers", "true",
+        "keepfont", (keepfont = "true" ? "true" : "false"),
+        "attv", (HasArg("AttV") ? "true" : "false"),
+        "casexterne", (HasArg("CasExterne") ? "true" : "false"),
+        "formcomplete", Trim(GetDataContextVarCached(source, "formcomplete", "")),
+        "data_context", g_dcRaw,
+        "signatureFile", "textefinal.rtf"
+    )
+    return meta
+}
+
+AttachCitrixJobArtifacts(jobDir, mode, meta := unset) {
+    global finalRtf, finalRtfSUG, textFile
+
+    isSUG := InStr(StrUpper(mode), "SUG")
+    sigSrc := ResolveScriptPath(isSUG ? finalRtfSUG : finalRtf)
+    sigDestName := "textefinal.rtf"
+
+    if IsSet(meta) && IsObject(meta) && meta.Has("signatureFile") && Trim(meta["signatureFile"]) != ""
+        sigDestName := Trim(meta["signatureFile"])
+
+    if FileExist(sigSrc) {
+        try FileCopy(sigSrc, jobDir "\" sigDestName, true)
+    }
+
+    txtSrc := ResolveScriptPath(textFile)
+    if FileExist(txtSrc) {
+        try FileCopy(txtSrc, jobDir "\textesRapport.txt", true)
+    }
+}
+
+ResolveScriptPath(path) {
+    if (path = "")
+        return ""
+    if InStr(path, ":")
+        return path
+    cleaned := RegExReplace(path, "^\.(\\|/)", "")
+    return A_ScriptDir "\" cleaned
+}
+
+WriteCitrixNextJobHint(bridgeRoot, jobId) {
+    if (jobId = "")
+        return
+    try {
+        queueDir := BridgeQueueDir(bridgeRoot)
+        if !DirExist(queueDir)
+            return
+        hintPath := queueDir "\_next_job.txt"
+        if FileExist(hintPath)
+            FileDelete(hintPath)
+        FileAppend(jobId, hintPath, "UTF-8")
+    } catch {
+    }
+}
+
+WaitForBridgeTerminal(jobDir, timeoutMs := 90000) {
+    donePath := jobDir "\done.json"
+    errPath := jobDir "\error.json"
+    deadline := A_TickCount + timeoutMs
+
+    while (A_TickCount < deadline) {
+        if FileExist(donePath) {
+            try {
+                out := BridgeReadFlatJson(donePath)
+                out["status"] := "done"
+                return out
+            } catch {
+            }
+        }
+        if FileExist(errPath) {
+            try {
+                out := BridgeReadFlatJson(errPath)
+                out["status"] := "error"
+                return out
+            } catch {
+            }
+        }
+        Sleep 200
+    }
+
+    return Map("status", "timeout")
+}
+
+TriggerCitrixTransferHotkey() {
+    hwnd := FindCitrixHostWindow()
+    if hwnd {
+        WinActivate("ahk_id " hwnd)
+        WinWaitActive("ahk_id " hwnd, , 2)
+        Sleep 80
+    }
+
+    Send "^!+t"
+}
+
+FindCitrixHostWindow() {
+    hint := Trim(EnvGet("CITRIX_WINDOW_HINT"))
+    if (hint != "") {
+        if hwnd := WinExist(hint)
+            return hwnd
+    }
+
+    if hwnd := WinExist("ahk_exe wfica32.exe")
+        return hwnd
+    if hwnd := WinExist("ahk_class Transparent Windows Client")
+        return hwnd
+
+    return 0
+}
+
 
 Fermer() {
 Send "!{F4}"    ; Alt + F4 (close Word)
@@ -587,127 +800,6 @@ EraseRadEdit() {
 }
 
 
-; Convertit toutes les séquences RTF \'xx (hex) en caractères réels
-DecodeRTFHex(s) {
-    out := ""
-    pos := 1
-    while RegExMatch(s, "\\'([0-9A-Fa-f]{2})", &m, pos) {
-        out .= SubStr(s, pos, m.Pos(0) - pos)
-        out .= Chr("0x" m[1])          ; ex: 'c9 -> É
-        pos := m.Pos(0) + m.Len(0)
-    }
-    return out . SubStr(s, pos)
-}
-
-; Décode \u#### (y compris valeurs négatives) -> caractère Unicode
-DecodeRTFUnicode(s) {
-    out := ""
-    pos := 1
-    while RegExMatch(s, "\\u(-?\d+)\??", &m, pos) {
-        out .= SubStr(s, pos, m.Pos(0) - pos)
-        code := m[1] + 0               ; coercition numérique
-        if (code < 0)
-            code += 65536
-        out .= Chr(code)
-        pos := m.Pos(0) + m.Len(0)
-    }
-    return out . SubStr(s, pos)
-}
-
-RensMaj(doc) {
-    try {
-        p1  := doc.Paragraphs.Item(1).Range
-        txt := p1.Text
-
-        if !RegExMatch(txt, "i)^\s*renseignements cliniques\s*:")
-            return
-
-        posColon := InStr(txt, ":")
-        if (posColon = 0)
-            return
-
-        i := posColon + 1
-        while (i <= StrLen(txt)) {
-            ch := SubStr(txt, i, 1)
-            if (ch = " " || ch = "`t" || Ord(ch) = 160) {
-                i++
-                continue
-            }
-            if (ch = "[" && SubStr(txt, i, 2) = "[]") {
-                i += 2
-                continue
-            }
-            break
-        }
-        if (i > StrLen(txt))
-            return
-
-        absStart := p1.Start + i - 1
-        absEnd   := absStart + 1
-
-        ; --- majuscule sans sélection visible ---
-        r := doc.Range(absStart, absEnd)
-        r.Case := 1
-
-        ; fallback si Case ne fonctionne pas
-        one := r.Text
-        up  := StrUpper(one)
-        if (up != one)
-            r.Text := up
-
-    } catch as err {
-        ; MsgBox "RensMaj err:`n" err.Message
-    }
-}
-
-CapitalizeParagraphStarts(doc, maxScan := 40) {
-    wdUpperCase := 1
-    paras := doc.Paragraphs
-    count := paras.Count
-
-    Loop count {
-        para := paras.Item(A_Index)
-        r := para.Range.Duplicate
-
-        ; Paragraphe vide / juste un retour
-        if (r.End - r.Start <= 1)
-            continue
-
-        ; Retirer le marqueur de paragraphe final (`r)
-        r.End -= 1
-
-        start := r.Start
-        end   := r.End
-        if (end <= start)
-            continue
-
-        sampleEnd := start + maxScan
-        if (sampleEnd > end)
-            sampleEnd := end
-
-        ; Lire juste le début du paragraphe (1 call COM)
-        sample := doc.Range(start, sampleEnd).Text
-        if (sample = "")
-            continue
-
-        ; Trouver la première LETTRE (pas chiffre) dans le sample
-	if !RegExMatch(sample, "\p{L}", &m)
-    	    continue
-
-        ; Position absolue de cette lettre dans le document Word
-        pos := start + (m.Pos[0] - 1)
-
-        chR := doc.Range(pos, pos + 1)
-        ch  := chR.Text
-
-        ; Si minuscule -> majuscule (1 seule lettre)
-        if RegExMatch(ch, "^\p{Ll}$")
-            chR.Case := wdUpperCase
-    }
-}
-
-
-
 GotoEndofText(){
 	target := WinExist("RadEdit ahk_exe RadEdit.exe")
 	if !target {
@@ -717,13 +809,6 @@ GotoEndofText(){
 
 	SendCopyData(target, CMD["GotoEnd"], "")
 	ExitApp()
-}
-
-HasArg(name) {
-    for v in A_Args
-        if (StrLower(v) = StrLower(name))
-            return true
-    return false
 }
 
 Basculer() {
@@ -772,4 +857,3 @@ Resume() {
     if ProcessExist("FusionDictate.exe")
        ProcessClose("FusionDictate.exe")
 }
-
