@@ -28,6 +28,8 @@ LogAttVer(titres := [], rootPath := "R:\CSSSNL\Bureautique\Imagerie Medicale\Par
     }
 
     name    := Trim(GetDataContextVarCached(target, "patnom", ""))
+    dossier := Trim(GetDataContextVarCached(target, "patdos", ""))
+    studydate := Trim(GetDataContextVarCached(target, "studydate", ""))
 
     if (name = "")
         name := "(NAME inconnu)"
@@ -36,11 +38,13 @@ LogAttVer(titres := [], rootPath := "R:\CSSSNL\Bureautique\Imagerie Medicale\Par
 
     ; 3) Construire le bloc texte
     ts := FormatTime(A_Now, "yyyy-MM-dd HH:mm:ss")
-    buf := reqTxt " - " name "  —  Date de lecture: " ts "`r`n"
+    buf := dossier " - " reqTxt " - " name "  -  Date de lecture: " ts "`r`n"
+
     if (IsObject(titres) && titres.Length > 0) {
         for t in titres
             buf .= "- " t "`r`n"
     }
+    buf .= "- Date d'examen: " (studydate != "" ? studydate : "(inconnue)") "`r`n"
     buf .= "----------------------------------------`r`n"
 
     ; 4) Append dans le fichier log
