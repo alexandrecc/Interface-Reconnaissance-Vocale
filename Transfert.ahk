@@ -7,6 +7,7 @@
 #Include <GetData>
 #Include <TransferShared>
 #Include <TransferBridgeProtocol>
+#Include <TransferArgumentRouting>
 
 WM_COPYDATA := 0x004A
 CMD := Map(
@@ -36,12 +37,15 @@ global target
 global downloadsDir := EnvGet("USERPROFILE") "\Downloads"
 SetTitleMatchMode 2
 
-if A_Args.Length = 0 {
-    MsgBox "Aucun Argument fourni. Utiliser Ouvrir, Fermer, Tout, ToutCitrix, Signer ou Reculer."
-    ExitApp
-}
+;if A_Args.Length = 0 {
+;    MsgBox "Aucun Argument fourni. Utiliser Ouvrir, Fermer, Tout, ToutCitrix, Signer ou Reculer."
+;    ExitApp
+;}
 
-arg := A_Args[1]
+; Si aucun argument, on agit comme "Tout"
+arg := (A_Args.Length >= 1) ? A_Args[1] : "Tout"
+arg := ResolveTransferArgument(arg)
+
 
 switch arg {
     case "Ouvrir":
@@ -59,10 +63,14 @@ switch arg {
     case "ToutSUG":
 	Ouvrir("ToutSUG")
 	Fermer()
+    case "ToutSUGCitrix":
+        ToutCitrix("ToutSUG")
     case "ToutCitrix":
         ToutCitrix()
     case "Signer":
         Signer()
+    case "SignerCitrix":
+        SignerCitrix()
     case "Reculer":
         Reculer()
     case "Pathologie":
@@ -342,9 +350,8 @@ TransfertStandard(word, doc, report_file, result, mode) {
     AddText(mode)
 }
 
-ToutCitrix() {
+ToutCitrix(mode := "ToutCitrix") {
     global CMD, report_file, reqnb_full
-    mode := "ToutCitrix"
 
     source := WinExist("RadEdit ahk_exe RadEdit.exe")
     if !source {
@@ -395,6 +402,7 @@ ToutCitrix() {
     status := result.Has("status") ? result["status"] : "timeout"
 
     if (status = "done") {
+        LogCitrixAttVerIfNeeded(source, result)
         ResetRadEdit(source, report_file, reqnb_full)
         return
     }
@@ -407,6 +415,87 @@ ToutCitrix() {
     }
 
     MsgBox "Aucune réponse Citrix après 90 secondes.`nLa tâche est conservée dans:`n" job["jobDir"]
+    ExitApp
+}
+
+LogCitrixAttVerIfNeeded(source, bridgeResult) {
+    if !IsObject(bridgeResult)
+        return
+
+    didAttVer := false
+    if bridgeResult.Has("didAttVer")
+        didAttVer := (StrLower(Trim(bridgeResult["didAttVer"])) = "true")
+
+    if !didAttVer
+        return
+
+    loc := StrLower(Trim(GetDataContextVarCached(source, "loc", "")))
+    modal := StrUpper(Trim(GetDataContextVarCached(source, "modal", "")))
+    if !(loc = "urgence" && modal = "CR")
+        return
+
+    titres := []
+    if bridgeResult.Has("attVerTitres") {
+        raw := Trim(bridgeResult["attVerTitres"])
+        if (raw != "") {
+            for t in StrSplit(raw, "||") {
+                t := Trim(t)
+                if (t != "")
+                    titres.Push(t)
+            }
+        }
+    }
+
+    LogAttVer(titres)
+}
+
+SignerCitrix() {
+    bridgeRoot := ResolveBridgeRoot()
+    meta := Map(
+        "mode", "SignerCitrix",
+        "stripHiddenMarkers", "false",
+        "keepfont", "false",
+        "attv", "false",
+        "casexterne", "false",
+        "signatureFile", ""
+    )
+
+    dummyRtf := A_Temp "\radedit_signer_" FormatTime(A_NowUTC, "yyyyMMdd_HHmmss") "_" Format("{:06}", Random(0, 999999)) ".rtf"
+    try {
+        FileAppend("{\rtf1\ansi}", dummyRtf, "UTF-8")
+        job := BridgeCreateJobFromFile(bridgeRoot, meta, dummyRtf)
+    } catch as err {
+        MsgBox "Impossible de créer la tâche Citrix Signer.`n`nErreur: " err.Message
+        ExitApp
+    } finally {
+        try {
+            if FileExist(dummyRtf)
+                FileDelete(dummyRtf)
+        }
+    }
+
+    WriteCitrixNextJobHint(bridgeRoot, job["jobId"])
+    TriggerCitrixTransferHotkey()
+
+    result := WaitForBridgeTerminal(job["jobDir"], 30000)
+    status := result.Has("status") ? result["status"] : "timeout"
+
+    if (status = "done") {
+        if !SendF8ToLocalSynapse() {
+            MsgBox "Commande Signer envoyée dans Citrix, mais Synapse local est introuvable pour envoyer F8."
+            ExitApp
+        }
+        return
+    }
+
+    if (status = "error") {
+        msg := result.Has("message") ? result["message"] : "Erreur Citrix inconnue."
+        code := result.Has("errorCode") ? result["errorCode"] : "UNKNOWN"
+        MsgBox "Le mode Signer Citrix a échoué.`nCode: " code "`nMessage: " msg
+        ExitApp
+    }
+
+    MsgBox "Aucune réponse Citrix après 30 secondes.`nLa tâche est conservée dans:`n" job["jobDir"]
     ExitApp
 }
 
@@ -580,22 +669,25 @@ if !WinWaitActive("ahk_exe RadImage.exe", , 5) {
     Sleep 20
     Send "^g"
 
-;Sleep 20
-
-Title := "v5.7"   ; stable part
-if hwnd := WinExist(Title " ahk_exe msedge.exe")
-{
-    WinActivate("ahk_id " hwnd)
-}
-if !WinWaitActive("ahk_id " hwnd, , 5)
-{
-    ;MsgBox "Synapse Viewer window not found or not active. Script will exit."
-    ExitApp
-}
-    Sleep 20
-    Send "{F8}"
+    if !SendF8ToLocalSynapse()
+        ExitApp
     ;fin Signer
     }
+
+SendF8ToLocalSynapse() {
+    title := "v5.7"
+    hwnd := WinExist(title " ahk_exe msedge.exe")
+    if !hwnd
+        return false
+
+    WinActivate("ahk_id " hwnd)
+    if !WinWaitActive("ahk_id " hwnd, , 5)
+        return false
+
+    Sleep 20
+    Send "{F8}"
+    return true
+}
 
 Reculer() {
 if WinExist("ahk_exe RadImage.exe") {

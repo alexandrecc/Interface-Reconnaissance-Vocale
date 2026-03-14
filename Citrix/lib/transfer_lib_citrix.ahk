@@ -197,12 +197,19 @@ CtxProcessNextJob(invocation := "manual") {
         jobId := meta["jobId"]
         CtxPerfSetJobId(jobId)
         CtxPerfMark(checkpoints, "cp4", processStartTick)
-        CtxTransferJobToRadImage(jobDir, meta, invocation)
+        transferOutcome := CtxTransferJobToRadImage(jobDir, meta, invocation)
         CtxPerfMark(checkpoints, "cp5", processStartTick)
-        CtxBridgeWriteDone(jobDir, Map(
+        donePayload := Map(
             "jobId", meta["jobId"],
             "worker", A_ComputerName
-        ))
+        )
+        if IsObject(transferOutcome) {
+            if (transferOutcome.Has("didAttVer"))
+                donePayload["didAttVer"] := transferOutcome["didAttVer"]
+            if (transferOutcome.Has("attVerTitres") && Trim(transferOutcome["attVerTitres"]) != "")
+                donePayload["attVerTitres"] := transferOutcome["attVerTitres"]
+        }
+        CtxBridgeWriteDone(jobDir, donePayload)
         CtxLog("Job completed: " meta["jobId"])
         CtxPerfMark(checkpoints, "cp6", processStartTick)
         CtxPerfFlushJob("done", checkpoints)
@@ -230,6 +237,17 @@ CtxProcessNextJob(invocation := "manual") {
 CtxTransferJobToRadImage(jobDir, meta, invocation := "manual") {
     jobId := meta.Has("jobId") ? meta["jobId"] : CtxGetJobIdFromPath(jobDir)
     transferStart := A_TickCount
+    mode := CtxJobMode(meta)
+    didAttVer := false
+    attVerTitres := ""
+
+    if CtxIsSignerMode(mode) {
+        stage := A_TickCount
+        CtxRunSignerOnly()
+        CtxLogStage(jobId, "signer_only", stage)
+        CtxLogStage(jobId, "total", transferStart)
+        return Map("didAttVer", "false", "attVerTitres", "")
+    }
 
     reportPath := jobDir "\report.rtf"
     if !FileExist(reportPath)
@@ -304,6 +322,19 @@ CtxTransferJobToRadImage(jobDir, meta, invocation := "manual") {
         CtxLogStage(jobId, "insert_report", stage)
 
         stage := A_TickCount
+        manualAttVer := CtxMetaTrue(meta, "attv")
+        if manualAttVer {
+            CtxInsertManualAttVer(doc)
+            didAttVer := true
+        } else if (examCheck.Has("needAttVer") && examCheck["needAttVer"]) {
+            CtxAttVer(doc)
+            didAttVer := true
+        }
+        if (didAttVer && examCheck.Has("titres") && IsObject(examCheck["titres"]) && examCheck["titres"].Length > 0)
+            attVerTitres := CtxJoin(examCheck["titres"], "||")
+        CtxLogStage(jobId, "apply_attver", stage)
+
+        stage := A_TickCount
         CtxAddFinalText(doc, meta, effectiveJobDir)
         CtxLogStage(jobId, "insert_signature", stage)
     } finally {
@@ -329,12 +360,40 @@ CtxTransferJobToRadImage(jobDir, meta, invocation := "manual") {
     Send "{F8}"
     CtxLogStage(jobId, "send_f8", stage)
     CtxLogStage(jobId, "total", transferStart)
+    return Map(
+        "didAttVer", (didAttVer ? "true" : "false"),
+        "attVerTitres", attVerTitres
+    )
 }
 
 CtxPrepareLocalJobFiles(jobDir, meta := unset) {
     reportPath := jobDir "\report.rtf"
     CtxLogVerbose("Using mounted artifacts directly: " jobDir)
     return Map("jobDir", jobDir, "reportPath", reportPath)
+}
+
+CtxJobMode(meta) {
+    if !IsObject(meta) || !meta.Has("mode")
+        return ""
+    return StrUpper(Trim(meta["mode"]))
+}
+
+CtxIsSignerMode(mode) {
+    return (mode = "SIGNER" || mode = "SIGNERCITRIX")
+}
+
+CtxRunSignerOnly() {
+    radHwnd := CtxFindRadImageHwnd(15000)
+    if !radHwnd
+        throw Error("RadImage.exe introuvable dans la session Citrix.")
+
+    radWin := "ahk_id " radHwnd
+    WinActivate(radWin)
+    if !WinWaitActive(radWin, , 2.5)
+        throw Error("Impossible d'activer RadImage pour Signer.")
+
+    Sleep 20
+    Send "^g"
 }
 
 CtxValidateTarget(ctx, meta) {
@@ -1256,6 +1315,92 @@ CtxCapitalizeParagraphStarts(doc, maxScan := 40) {
         if RegExMatch(ch, "^\p{Ll}$")
             chR.Case := wdUpperCase
     }
+}
+
+CtxAttVer(doc) {
+    alignLeft := 0
+    alignCenter := 1
+
+    paras := doc.Paragraphs
+    cnt := paras.Count
+    if (cnt < 1)
+        return
+
+    idx := 0
+    Loop cnt {
+        i := cnt - A_Index + 1
+        t := Trim(paras.Item(i).Range.Text, "`r`n `t")
+        if (t != "") {
+            idx := i
+            break
+        }
+    }
+    if (idx = 0)
+        return
+
+    p := paras.Item(idx)
+    txt := p.Range.Text
+    txt := StrReplace(txt, Chr(160), " ")
+    txt := Trim(txt, "`r`n `t")
+    txt := RTrim(txt, " :")
+
+    if !RegExMatch(txt, "i)^\s*attention\s+(?:à|a)\s+v(?:é|e)rifier\s*$")
+        return
+
+    p.Range.InsertParagraphBefore()
+    paras := doc.Paragraphs
+    idx := idx + 1
+    p := paras.Item(idx)
+
+    if (idx > 1)
+        paras.Item(idx - 1).Alignment := alignLeft
+
+    r := p.Range
+    txtRange := doc.Range(r.Start, Max(r.Start, r.End - 1))
+    try txtRange.Case := 1
+    catch {
+        txtRange.Text := StrUpper(txtRange.Text)
+    }
+    txtRange.Font.Name := "Arial"
+    txtRange.Font.Size := 12
+    txtRange.Font.Bold := True
+    txtRange.Font.Underline := 1
+    p.Alignment := alignCenter
+
+    if (idx < paras.Count)
+        paras.Item(idx + 1).Alignment := alignLeft
+    else {
+        r2 := doc.Range(doc.Content.End, doc.Content.End)
+        r2.InsertParagraphAfter()
+        paras := doc.Paragraphs
+        paras.Item(paras.Count).Alignment := alignLeft
+    }
+}
+
+CtxInsertManualAttVer(doc) {
+    endPos := doc.Content.End
+    startPos := (endPos > 0) ? (endPos - 1) : 0
+    r := doc.Range(startPos, startPos)
+
+    r.InsertParagraphAfter()
+    r.Collapse(0)
+    r.InsertParagraphAfter()
+    r.Collapse(0)
+
+    r.Text := "ATTENTION À VÉRIFIER"
+    r.Font.Name := "Arial"
+    r.Font.Size := 12
+    r.Font.Bold := True
+    r.Font.Underline := 1
+    r.ParagraphFormat.Alignment := 1
+
+    r.InsertParagraphAfter()
+
+    endPos2 := doc.Content.End
+    tailPos := (endPos2 > 0) ? (endPos2 - 1) : 0
+    tail := doc.Range(tailPos, tailPos)
+    tail.Font.Name := "Arial"
+    tail.Font.Size := 10
 }
 
 CtxCheckExamList(doc, reportPath, jobDir := "") {
