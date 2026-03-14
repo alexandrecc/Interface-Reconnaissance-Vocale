@@ -1,29 +1,18 @@
 ﻿#Requires AutoHotkey v2
 
-; Ancien Signer()
+; Delegate to Transfert.ahk Signer so Suivant always follows
+; the same local/Citrix auto-routing and Synapse F8 behavior.
+transfertScript := A_ScriptDir "\Transfert.ahk"
 
-if WinExist("ahk_exe RadImage.exe") {
-    WinActivate
+if !FileExist(transfertScript) {
+    MsgBox "Transfert.ahk introuvable:`n" transfertScript
+    ExitApp(1)
 }
-if !WinWaitActive("ahk_exe RadImage.exe", , 5) {
-    MsgBox "Radimage window not found or not active. Script will exit."
-    ExitApp
-}
-    Sleep 20
-    Send "^g"
 
-;Sleep 20
-
-Title := "v5.7"   ; stable part
-if hwnd := WinExist(Title " ahk_exe msedge.exe")
-{
-    WinActivate("ahk_id " hwnd)
+try {
+    exitCode := RunWait('"' A_AhkPath '" "' transfertScript '" Signer', A_ScriptDir)
+    ExitApp(exitCode)
+} catch as err {
+    MsgBox "Impossible d'executer Transfert.ahk Signer.`n`nErreur: " err.Message
+    ExitApp(1)
 }
-if !WinWaitActive("ahk_id " hwnd, , 5)
-{
-    ;MsgBox "Synapse Viewer window not found or not active. Script will exit."
-    ExitApp
-}
-    Sleep 20
-    Send "{F8}"
-

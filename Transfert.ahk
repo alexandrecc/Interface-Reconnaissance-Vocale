@@ -419,20 +419,37 @@ ToutCitrix(mode := "ToutCitrix") {
 }
 
 LogCitrixAttVerIfNeeded(source, bridgeResult) {
+    global target
     if !IsObject(bridgeResult)
+    {
+        TraceCitrixAttVer("skip:not_object")
         return
+    }
 
     didAttVer := false
-    if bridgeResult.Has("didAttVer")
+    if bridgeResult.Has("didAttVer") {
         didAttVer := (StrLower(Trim(bridgeResult["didAttVer"])) = "true")
+    } else if HasArg("AttV") {
+        ; Compatibilite: ancien worker Citrix sans didAttVer dans done.json.
+        didAttVer := true
+    }
 
     if !didAttVer
+    {
+        TraceCitrixAttVer("skip:didAttVer_false")
         return
+    }
+
+    ; LogAttVer lit le data context via la variable globale target.
+    target := source
 
     loc := StrLower(Trim(GetDataContextVarCached(source, "loc", "")))
     modal := StrUpper(Trim(GetDataContextVarCached(source, "modal", "")))
     if !(loc = "urgence" && modal = "CR")
+    {
+        TraceCitrixAttVer("skip:loc_modal_mismatch", "loc=" loc " modal=" modal)
         return
+    }
 
     titres := []
     if bridgeResult.Has("attVerTitres") {
@@ -446,7 +463,21 @@ LogCitrixAttVerIfNeeded(source, bridgeResult) {
         }
     }
 
-    LogAttVer(titres)
+    if !LogAttVer(titres) {
+        TraceCitrixAttVer("error:logattver_failed", "loc=" loc " modal=" modal " titres=" titres.Length)
+        MsgBox "ATTV appliqué, mais impossible d'écrire dans le fichier de suivi urgence (`R:\...\ATTENTION À VÉRIFIER.txt`)."
+        return
+    }
+    TraceCitrixAttVer("ok:logged", "loc=" loc " modal=" modal " titres=" titres.Length)
+}
+
+TraceCitrixAttVer(event, details := "") {
+    ts := FormatTime(A_Now, "yyyy-MM-dd HH:mm:ss")
+    line := "[" ts "] " event
+    if (details != "")
+        line .= " | " details
+    line .= "`r`n"
+    try FileAppend(line, A_ScriptDir "\citrix_attv_trace.log", "UTF-8")
 }
 
 SignerCitrix() {

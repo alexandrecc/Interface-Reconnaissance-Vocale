@@ -357,7 +357,8 @@ CtxTransferJobToRadImage(jobDir, meta, invocation := "manual") {
     CtxLogStage(jobId, "return_radimage", stage)
 
     stage := A_TickCount
-    Send "{F8}"
+    if !CtxSendF8ToRadImage(radWin)
+        throw Error("Impossible d'envoyer F8 a RadImage.")
     CtxLogStage(jobId, "send_f8", stage)
     CtxLogStage(jobId, "total", transferStart)
     return Map(
@@ -394,6 +395,21 @@ CtxRunSignerOnly() {
 
     Sleep 20
     Send "^g"
+}
+
+CtxSendF8ToRadImage(radWin) {
+    try {
+        ControlSend("{F8}", , radWin)
+        return true
+    } catch {
+    }
+
+    try WinActivate(radWin)
+    if !WinWaitActive(radWin, , 1.5)
+        return false
+    Sleep 20
+    Send "{F8}"
+    return true
 }
 
 CtxValidateTarget(ctx, meta) {
