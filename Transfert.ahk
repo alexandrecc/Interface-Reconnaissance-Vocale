@@ -1,4 +1,4 @@
-#Requires AutoHotkey v2
+﻿#Requires AutoHotkey v2
 
 #Include <AmenderRapport>
 #Include <FinalTextInserts>
@@ -24,10 +24,13 @@ global reqnb_full := ""
 global data_context_json := ""
 global reqnb_title := ""
 
-global g_dcRaw := ""          ; JSON brut en mémoire
+global g_dcRaw := ""          ; JSON brut en mÃ©moire
 global g_dcCache := Map()     ; Map(key -> value)
-global g_dcHwnd := 0          ; hwnd associé au cache
+global g_dcHwnd := 0          ; hwnd associÃ© au cache
 
+global g_scriptStartTick := A_TickCount
+global g_scriptStartIso := FormatTime(A_Now, "yyyy-MM-dd HH:mm:ss")
+global g_transferArg := ""
 OnMessage(WM_COPYDATA, CopyDataHandler)
 textFile := ".\Textes\Insertions\textesRapport.txt"
 finalRtf := ".\Textes\Insertions\textefinal.rtf"
@@ -45,6 +48,7 @@ SetTitleMatchMode 2
 ; Si aucun argument, on agit comme "Tout"
 arg := (A_Args.Length >= 1) ? A_Args[1] : "Tout"
 arg := ResolveTransferArgument(arg)
+g_transferArg := arg
 
 
 switch arg {
@@ -100,28 +104,28 @@ ExitApp
 Ouvrir(mode := "") {
     global reqnb_norm, reqnb_full, target  
 
-; === Pré requis:Fenêtre de protocolage fermée
+; === PrÃ© requis:FenÃªtre de protocolage fermÃ©e
 bloquante := "Module Protocolage"  
 
-; Vérifier si ouverte
+; VÃ©rifier si ouverte
 if WinExist(bloquante) {
     WinClose bloquante                        
     if !WinWaitClose(bloquante, , 2) {        
-        MsgBox "La fenêtre bloquante est encore ouverte. Le script va s'arrêter.", 262144
+        MsgBox "La fenÃªtre bloquante est encore ouverte. Le script va s'arrÃªter.", 262144
         ExitApp
     }
 }
 
-; === Step 1: Activer la fenêtre Radimage ===
+; === Step 1: Activer la fenÃªtre Radimage ===
 if !WinExist("ahk_exe RadImage.exe") {
-    MsgBox "Fenêtre Radimage introuvable ou inactive. Le script va se fermer.", 262144
+    MsgBox "FenÃªtre Radimage introuvable ou inactive. Le script va se fermer.", 262144
     ExitApp
 }
 
 WinActivate("ahk_exe RadImage.exe")
 WinWaitActive("ahk_exe RadImage.exe",,5)
 
-maxMs    := 5000    ; délai total max en ms (augmente si Radimage est lent)
+maxMs    := 5000    ; dÃ©lai total max en ms (augmente si Radimage est lent)
 interval := 150      ; pause entre essais
 deadline := A_TickCount + maxMs
 ok := false
@@ -164,16 +168,16 @@ found := false
             }
         } catch as err {
 	}
-        Sleep 200  ; attendre avant de réessayer
+        Sleep 200  ; attendre avant de rÃ©essayer
     }
     if !found {
-        MsgBox "Impossible de trouver le numéro de requête car RadImage est trop lent à réagir. SVP réessayer dans quelques secondes."
+        MsgBox "Impossible de trouver le numÃ©ro de requÃªte car RadImage est trop lent Ã  rÃ©agir. SVP rÃ©essayer dans quelques secondes."
 	        ExitApp
     }
 
     rad_norm := StrReplace(radText, "-") 
 
-; === Vérification concordance ReqNb ===
+; === VÃ©rification concordance ReqNb ===
 target := WinExist("RadEdit ahk_exe RadEdit.exe")
 if !target {
     MsgBox "RadEdit introuvable."
@@ -184,7 +188,7 @@ PrimeDataContextCached(target)
 
 formcomplete := Trim(GetDataContextVarCached(target, "formcomplete", ""))
 if (formcomplete = "false") {
-    MsgBox "Le rapport n'a pas été généré par le formulaire."
+    MsgBox "Le rapport n'a pas Ã©tÃ© gÃ©nÃ©rÃ© par le formulaire."
     ExitApp
 }
 
@@ -196,7 +200,7 @@ try {
 	    SendCopyData(target, CMD["SetText"], "{\rtf1\ansi}")
             ExitApp
         } else {
-            MsgBox "Impossible de récupérer la requête depuis RadEdit.`nImpossible de vérifier la concordance."
+            MsgBox "Impossible de rÃ©cupÃ©rer la requÃªte depuis RadEdit.`nImpossible de vÃ©rifier la concordance."
             ExitApp
         }
     }
@@ -204,22 +208,22 @@ try {
 
     if (reqnb_norm != rad_norm) {
         result := MsgBox(
-            "La requête de l'examen actif ne correspond pas à la requête de l'examen dicté.`n"
-            . "Synapse → " reqnb_norm "`n"
-            . "RadImage → " rad_norm "`n`n"
-            . "Voulez-vous continuer quand même ?",
-            "Vérification", 0x40024) ; Yes/No + AlwaysOnTop
+            "La requÃªte de l'examen actif ne correspond pas Ã  la requÃªte de l'examen dictÃ©.`n"
+            . "Synapse â†’ " reqnb_norm "`n"
+            . "RadImage â†’ " rad_norm "`n`n"
+            . "Voulez-vous continuer quand mÃªme ?",
+            "VÃ©rification", 0x40024) ; Yes/No + AlwaysOnTop
 
         if (result = "No") {
             ExitApp
         } else {
-            ; === Vérification supplémentaire : rapport déjà présent ? ===
+            ; === VÃ©rification supplÃ©mentaire : rapport dÃ©jÃ  prÃ©sent ? ===
             text := CheckFenDict(fenDict)
             if (Trim(text) != "") {
                 SoundPlay "*16"
-                MsgBox "L'examen sélectionné contient déjà un rapport.`n`n"
-                    . "Le script s'arrêtera.`n`n"
-                    . "SVP sélectionnez le bon examen.",
+                MsgBox "L'examen sÃ©lectionnÃ© contient dÃ©jÃ  un rapport.`n`n"
+                    . "Le script s'arrÃªtera.`n`n"
+                    . "SVP sÃ©lectionnez le bon examen.",
                     "ATTENTION", 262144
                 ExitApp
             }
@@ -227,7 +231,7 @@ try {
     }
 }
 catch as err {
-    MsgBox "Erreur lors de la vérification ReqNb:`n" err.Message
+    MsgBox "Erreur lors de la vÃ©rification ReqNb:`n" err.Message
     ExitApp
 }
 
@@ -244,13 +248,13 @@ catch as err {
 }
 
 if !ok {
-    MsgBox "Impossible de sélectionner l'onglet 'Transcription' après " maxMs " ms.`nDernière erreur: " lastErr
+    MsgBox "Impossible de sÃ©lectionner l'onglet 'Transcription' aprÃ¨s " maxMs " ms.`nDerniÃ¨re erreur: " lastErr
     ExitApp
 }
 Sleep 20
 
 if !ClickLotCourant() {
-    MsgBox "Bouton 'Lot Courant' introuvable. Le script s'arrête."
+    MsgBox "Bouton 'Lot Courant' introuvable. Le script s'arrÃªte."
     ExitApp
 }
 
@@ -292,7 +296,7 @@ while (report_file == "" && waited < maxWait) {
     waited += 50
 }
 if (report_file = "") {
-    MsgBox "RadEdit n’a pas retourné de fichier temporaire."
+    MsgBox "RadEdit nâ€™a pas retournÃ© de fichier temporaire."
     ExitApp
 }
 
@@ -322,7 +326,7 @@ ResetRadEdit(target, report_file, reqnb_full)
 
 
 TransfertStandard(word, doc, report_file, result, mode) {
-    ; --- contenu identique à ce que tu avais dans le try de Ouvrir() ---
+    ; --- contenu identique Ã  ce que tu avais dans le try de Ouvrir() ---
 
     doc.Content.Delete()
     sel := word.Selection
@@ -352,6 +356,7 @@ TransfertStandard(word, doc, report_file, result, mode) {
 
 ToutCitrix(mode := "ToutCitrix") {
     global CMD, report_file, reqnb_full
+    perf := CitrixPerfStart("ToutCitrix:" mode)
 
     source := WinExist("RadEdit ahk_exe RadEdit.exe")
     if !source {
@@ -359,63 +364,98 @@ ToutCitrix(mode := "ToutCitrix") {
         ExitApp
     }
 
+    CitrixPerfMark(perf, "source_found")
     PrimeDataContextCached(source)
+    CitrixPerfMark(perf, "data_context_primed")
     formcomplete := Trim(GetDataContextVarCached(source, "formcomplete", ""))
     if (formcomplete = "false") {
-        MsgBox "Le rapport n'a pas été généré par le formulaire."
+        MsgBox "Le rapport n'a pas Ã©tÃ© gÃ©nÃ©rÃ© par le formulaire."
         ExitApp
     }
 
     reqnb_full := Trim(GetDataContextVarCached(source, "reqnb", ""))
     if (reqnb_full = "") {
-        MsgBox "Impossible de récupérer la requête depuis RadEdit."
+        MsgBox "Impossible de rÃ©cupÃ©rer la requÃªte depuis RadEdit."
         ExitApp
     }
 
+    CitrixPerfMark(perf, "precheck_done")
     SendCopyData(source, CMD["CleanUpEnd"], "")
     keepfont := Trim(GetDataContextVarCached(source, "keepfont", ""))
     if (keepfont != "true")
         SendCopyData(source, CMD["FixFont"], "Arial;10")
 
+    CitrixPerfMark(perf, "cleanup_font_done")
     report_file := ""
     SendCopyData(source, CMD["RequestTemp"], '{ "stripHiddenMarkers": true }')
+    CitrixPerfMark(perf, "request_temp_sent")
     if !WaitForRadEditTempFile(2000) {
-        MsgBox "RadEdit n'a pas retourné de fichier temporaire pour le transfert Citrix."
+        MsgBox "RadEdit n'a pas retournÃ© de fichier temporaire pour le transfert Citrix."
         ExitApp
     }
 
+    CitrixPerfMark(perf, "temp_file_ready")
     bridgeRoot := ResolveBridgeRoot()
     meta := BuildCitrixTransferMeta(source, mode)
+    CitrixPerfMark(perf, "bridge_meta_ready")
+    primedCitrixHwnd := PrimeCitrixHostWindowFast()
 
-    try job := BridgeCreateJobFromFile(bridgeRoot, meta, report_file)
+    try job := BridgeCreateJobFromFile(bridgeRoot, meta, report_file, "ToutCitrix:" mode)
     catch as err {
-        MsgBox "Impossible de créer la tâche Citrix.`n`nErreur: " err.Message
+        MsgBox "Impossible de crÃ©er la tÃ¢che Citrix.`n`nErreur: " err.Message
         ExitApp
     }
 
-    AttachCitrixJobArtifacts(job["jobDir"], mode, meta)
-    WriteCitrixNextJobHint(bridgeRoot, job["jobId"])
+    CitrixPerfMark(perf, "job_created")
+    if CitrixShouldAttachJobArtifacts(bridgeRoot, mode) {
+        AttachCitrixJobArtifacts(job["jobDir"], mode, meta)
+        CitrixPerfMark(perf, "artifacts_attached")
+    } else {
+        CitrixPerfMark(perf, "artifacts_skipped")
+    }
+    hintWritten := WriteCitrixNextJobHint(bridgeRoot, job["jobId"])
+    CitrixPerfMark(perf, hintWritten ? "hint_written" : "hint_skipped")
 
-    TriggerCitrixTransferHotkey()
+    TriggerCitrixTransferHotkey(perf, primedCitrixHwnd)
 
-    result := WaitForBridgeTerminal(job["jobDir"], 90000)
+    result := WaitForBridgeTerminal(job["jobDir"], 90000, job["jobId"])
     status := result.Has("status") ? result["status"] : "timeout"
 
     if (status = "done") {
+        wasCancelled := result.Has("cancelled") && (StrLower(Trim(result["cancelled"])) = "true")
+        if wasCancelled {
+            BridgeCleanupSlotArtifacts(job["jobDir"])
+            HandleCitrixCancelledTransferLocally(source)
+            return
+        }
+
         LogCitrixAttVerIfNeeded(source, result)
+        LogFileCitrix(source)
         ResetRadEdit(source, report_file, reqnb_full)
+        BridgeCleanupSlotArtifacts(job["jobDir"])
         return
     }
 
     if (status = "error") {
         msg := result.Has("message") ? result["message"] : "Erreur Citrix inconnue."
         code := result.Has("errorCode") ? result["errorCode"] : "UNKNOWN"
-        MsgBox "Le transfert Citrix a échoué.`nCode: " code "`nMessage: " msg
+        BridgeCleanupSlotArtifacts(job["jobDir"])
+        MsgBox "Le transfert Citrix a Ã©chouÃ©.`nCode: " code "`nMessage: " msg
         ExitApp
     }
 
-    MsgBox "Aucune réponse Citrix après 90 secondes.`nLa tâche est conservée dans:`n" job["jobDir"]
+    MsgBox "Aucune rÃ©ponse Citrix aprÃ¨s 90 secondes.`nLa tÃ¢che est conservÃ©e dans:`n" job["jobDir"]
     ExitApp
+}
+
+HandleCitrixCancelledTransferLocally(source) {
+    MsgBox "Transfert annule. Vous pouvez maintenant continuer votre dictee.", "TERMINE", 262144
+
+    win := "RadEdit ahk_exe RadEdit.exe"
+    if WinExist(win)
+        WinActivate(win)
+    if WinWaitActive(win, , 5)
+        Send "{PgDn}"
 }
 
 LogCitrixAttVerIfNeeded(source, bridgeResult) {
@@ -455,12 +495,25 @@ LogCitrixAttVerIfNeeded(source, bridgeResult) {
     }
 
     if !LogAttVer(titres) {
-        MsgBox "ATTV appliqué, mais impossible d'écrire dans le fichier de suivi urgence (`R:\...\ATTENTION À VÉRIFIER.txt`)."
+        MsgBox "ATTV appliquÃ©, mais impossible d'Ã©crire dans le fichier de suivi urgence (`R:\...\ATTENTION Ã€ VÃ‰RIFIER.txt`)."
         return
     }
 }
 
 SignerCitrix() {
+    perf := CitrixPerfStart("SignerCitrix")
+    primedCitrixHwnd := PrimeCitrixHostWindowFast()
+    if CitrixUseDirectSignerMode() {
+        CitrixPerfMark(perf, "signer_mode_direct")
+        TriggerCitrixSignerHotkey(perf, primedCitrixHwnd)
+        if !SendF8ToLocalSynapse() {
+            MsgBox "Commande Signer envoyÃ©e dans Citrix, mais Synapse local est introuvable pour envoyer F8."
+            ExitApp
+        }
+        return
+    }
+
+    CitrixPerfMark(perf, "signer_mode_bridge")
     bridgeRoot := ResolveBridgeRoot()
     meta := Map(
         "mode", "SignerCitrix",
@@ -470,13 +523,14 @@ SignerCitrix() {
         "casexterne", "false",
         "signatureFile", ""
     )
+    CitrixPerfMark(perf, "bridge_meta_ready")
 
     dummyRtf := A_Temp "\radedit_signer_" FormatTime(A_NowUTC, "yyyyMMdd_HHmmss") "_" Format("{:06}", Random(0, 999999)) ".rtf"
     try {
         FileAppend("{\rtf1\ansi}", dummyRtf, "UTF-8")
-        job := BridgeCreateJobFromFile(bridgeRoot, meta, dummyRtf)
+        job := BridgeCreateJobFromFile(bridgeRoot, meta, dummyRtf, "SignerCitrix")
     } catch as err {
-        MsgBox "Impossible de créer la tâche Citrix Signer.`n`nErreur: " err.Message
+        MsgBox "Impossible de crÃ©er la tÃ¢che Citrix Signer.`n`nErreur: " err.Message
         ExitApp
     } finally {
         try {
@@ -484,16 +538,19 @@ SignerCitrix() {
                 FileDelete(dummyRtf)
         }
     }
+    CitrixPerfMark(perf, "job_created")
 
-    WriteCitrixNextJobHint(bridgeRoot, job["jobId"])
-    TriggerCitrixTransferHotkey()
+    hintWritten := WriteCitrixNextJobHint(bridgeRoot, job["jobId"])
+    CitrixPerfMark(perf, hintWritten ? "hint_written" : "hint_skipped")
+    TriggerCitrixTransferHotkey(perf, primedCitrixHwnd)
 
-    result := WaitForBridgeTerminal(job["jobDir"], 30000)
+    result := WaitForBridgeTerminal(job["jobDir"], 30000, job["jobId"])
     status := result.Has("status") ? result["status"] : "timeout"
 
     if (status = "done") {
+        BridgeCleanupSlotArtifacts(job["jobDir"])
         if !SendF8ToLocalSynapse() {
-            MsgBox "Commande Signer envoyée dans Citrix, mais Synapse local est introuvable pour envoyer F8."
+            MsgBox "Commande Signer envoyÃ©e dans Citrix, mais Synapse local est introuvable pour envoyer F8."
             ExitApp
         }
         return
@@ -502,12 +559,26 @@ SignerCitrix() {
     if (status = "error") {
         msg := result.Has("message") ? result["message"] : "Erreur Citrix inconnue."
         code := result.Has("errorCode") ? result["errorCode"] : "UNKNOWN"
-        MsgBox "Le mode Signer Citrix a échoué.`nCode: " code "`nMessage: " msg
+        BridgeCleanupSlotArtifacts(job["jobDir"])
+        MsgBox "Le mode Signer Citrix a Ã©chouÃ©.`nCode: " code "`nMessage: " msg
         ExitApp
     }
 
-    MsgBox "Aucune réponse Citrix après 30 secondes.`nLa tâche est conservée dans:`n" job["jobDir"]
+    MsgBox "Aucune rÃ©ponse Citrix aprÃ¨s 30 secondes.`nLa tÃ¢che est conservÃ©e dans:`n" job["jobDir"]
     ExitApp
+}
+
+CitrixSignerMode() {
+    raw := StrLower(Trim(EnvGet("CITRIX_SIGNER_MODE")))
+    if (raw = "")
+        return "direct"
+    if (raw = "bridge" || raw = "job")
+        return "bridge"
+    return "direct"
+}
+
+CitrixUseDirectSignerMode() {
+    return (CitrixSignerMode() != "bridge")
 }
 
 WaitForRadEditTempFile(timeoutMs := 1200) {
@@ -526,18 +597,19 @@ ResolveBridgeRoot() {
     if (envPath != "")
         return envPath
 
-    return "\\regional.reg14.rtss.qc.ca\app\DragonMedicalOne\Radiologie\Test Citrix"
+    citrixDataRoot := "\\regional.reg14.rtss.qc.ca\app\DragonMedicalOne\Radiologie\Citrix Data"
+    userSubdir := Trim(A_UserName)
+    return (userSubdir != "" ? citrixDataRoot "\" userSubdir : citrixDataRoot)
 }
 
 BuildCitrixTransferMeta(source, mode := "ToutCitrix") {
-    global reqnb_full, g_dcRaw
+    global reqnb_full
 
     keepfont := Trim(GetDataContextVarCached(source, "keepfont", ""))
     meta := Map(
         "mode", mode,
         "reqnb", reqnb_full,
         "patdos", Trim(GetDataContextVarCached(source, "patdos", "")),
-        "patnom", Trim(GetDataContextVarCached(source, "patnom", "")),
         "proc", Trim(GetDataContextVarCached(source, "proc", "")),
         "modal", Trim(GetDataContextVarCached(source, "modal", "")),
         "loc", Trim(GetDataContextVarCached(source, "loc", "")),
@@ -547,7 +619,6 @@ BuildCitrixTransferMeta(source, mode := "ToutCitrix") {
         "attv", (HasArg("AttV") ? "true" : "false"),
         "casexterne", (HasArg("CasExterne") ? "true" : "false"),
         "formcomplete", Trim(GetDataContextVarCached(source, "formcomplete", "")),
-        "data_context", g_dcRaw,
         "signatureFile", "textefinal.rtf"
     )
     return meta
@@ -564,13 +635,46 @@ AttachCitrixJobArtifacts(jobDir, mode, meta := unset) {
         sigDestName := Trim(meta["signatureFile"])
 
     if FileExist(sigSrc) {
-        try FileCopy(sigSrc, jobDir "\" sigDestName, true)
+        try FileCopy(sigSrc, jobDir "\" sigDestName, false)
     }
 
     txtSrc := ResolveScriptPath(textFile)
     if FileExist(txtSrc) {
-        try FileCopy(txtSrc, jobDir "\textesRapport.txt", true)
+        try FileCopy(txtSrc, jobDir "\textesRapport.txt", false)
     }
+}
+
+CitrixShouldAttachJobArtifacts(bridgeRoot := "", mode := "") {
+    raw := StrLower(Trim(EnvGet("CITRIX_ATTACH_JOB_ARTIFACTS")))
+    if (raw = "1" || raw = "true" || raw = "yes" || raw = "on")
+        return true
+    if (raw = "0" || raw = "false" || raw = "no" || raw = "off")
+        return false
+
+    ; Auto mode: skip per-job artifact copy when shared cache already has required files.
+    return !CitrixArtifactsCachedForMode(bridgeRoot, mode)
+}
+
+CitrixArtifactsCachedForMode(bridgeRoot, mode := "") {
+    cacheDir := CitrixCachedInsertionsDir(bridgeRoot)
+    if (cacheDir = "")
+        return false
+
+    textPath := cacheDir "\textesRapport.txt"
+    if !FileExist(textPath)
+        return false
+
+    isSUG := InStr(StrUpper(mode), "SUG")
+    sigFile := isSUG ? "textefinalSUG.rtf" : "textefinal.rtf"
+    return (FileExist(cacheDir "\" sigFile) != "")
+}
+
+CitrixCachedInsertionsDir(bridgeRoot := "") {
+    root := Trim(bridgeRoot)
+    if (root = "")
+        return ""
+    ; bridgeRoot is ...\Citrix Data\<username>; cached artifacts are user-specific in ...\<username>\Textes\Insertions
+    return root "\Textes\Insertions"
 }
 
 ResolveScriptPath(path) {
@@ -584,20 +688,26 @@ ResolveScriptPath(path) {
 
 WriteCitrixNextJobHint(bridgeRoot, jobId) {
     if (jobId = "")
-        return
+        return false
+    if BridgeUseSingleSlotMode()
+        return false
     try {
         queueDir := BridgeQueueDir(bridgeRoot)
         if !DirExist(queueDir)
-            return
+            return false
         hintPath := queueDir "\_next_job.txt"
-        if FileExist(hintPath)
-            FileDelete(hintPath)
-        FileAppend(jobId, hintPath, "UTF-8")
+        file := FileOpen(hintPath, "w", "UTF-8")
+        if !IsObject(file)
+            return false
+        file.Write(jobId)
+        file.Close()
+        return true
     } catch {
+        return false
     }
 }
 
-WaitForBridgeTerminal(jobDir, timeoutMs := 90000) {
+WaitForBridgeTerminal(jobDir, timeoutMs := 90000, expectedJobId := "") {
     donePath := jobDir "\done.json"
     errPath := jobDir "\error.json"
     deadline := A_TickCount + timeoutMs
@@ -606,6 +716,10 @@ WaitForBridgeTerminal(jobDir, timeoutMs := 90000) {
         if FileExist(donePath) {
             try {
                 out := BridgeReadFlatJson(donePath)
+                if (expectedJobId != "" && (!out.Has("jobId") || Trim(out["jobId"]) != expectedJobId)) {
+                    Sleep 50
+                    continue
+                }
                 out["status"] := "done"
                 return out
             } catch {
@@ -614,6 +728,10 @@ WaitForBridgeTerminal(jobDir, timeoutMs := 90000) {
         if FileExist(errPath) {
             try {
                 out := BridgeReadFlatJson(errPath)
+                if (expectedJobId != "" && (!out.Has("jobId") || Trim(out["jobId"]) != expectedJobId)) {
+                    Sleep 50
+                    continue
+                }
                 out["status"] := "error"
                 return out
             } catch {
@@ -625,15 +743,98 @@ WaitForBridgeTerminal(jobDir, timeoutMs := 90000) {
     return Map("status", "timeout")
 }
 
-TriggerCitrixTransferHotkey() {
+PrimeCitrixHostWindowFast() {
     hwnd := FindCitrixHostWindow()
+    if hwnd && !WinActive("ahk_id " hwnd) {
+        try WinActivate("ahk_id " hwnd)
+    }
+    return hwnd
+}
+
+TriggerCitrixTransferHotkey(perf := unset, primedHwnd := 0) {
+    TriggerCitrixMappedHotkey("^!+t", perf, primedHwnd, "hotkey_sent")
+}
+
+TriggerCitrixSignerHotkey(perf := unset, primedHwnd := 0) {
+    TriggerCitrixMappedHotkey("^!+s", perf, primedHwnd, "hotkey_sent")
+}
+
+TriggerCitrixMappedHotkey(keyCombo, perf := unset, primedHwnd := 0, perfStage := "hotkey_sent") {
+    global g_scriptStartTick
+    hwnd := primedHwnd ? primedHwnd : FindCitrixHostWindow()
     if hwnd {
-        WinActivate("ahk_id " hwnd)
-        WinWaitActive("ahk_id " hwnd, , 2)
-        Sleep 80
+        primedReady := (primedHwnd && WinActive("ahk_id " hwnd))
+        if !primedReady && !WinActive("ahk_id " hwnd) {
+            WinActivate("ahk_id " hwnd)
+            WinWaitActive("ahk_id " hwnd, , 2)
+        }
+        if !primedReady {
+            settleMs := CitrixPostActivateSleepMs()
+            if (settleMs > 0)
+                Sleep settleMs
+        }
+        if IsSet(perf)
+            CitrixPerfMark(perf, "citrix_window_ready")
     }
 
-    Send "^!+t"
+    elapsedBeforeSendMs := A_TickCount - g_scriptStartTick
+    Send keyCombo
+    elapsedAfterSendMs := A_TickCount - g_scriptStartTick
+    LogCitrixHotkeyDispatchTiming(elapsedBeforeSendMs, elapsedAfterSendMs, hwnd)
+    if IsSet(perf)
+        CitrixPerfMark(perf, perfStage)
+}
+
+CitrixPostActivateSleepMs() {
+    raw := Trim(EnvGet("CITRIX_POST_ACTIVATE_SLEEP_MS"))
+    if (raw = "")
+        return 30
+    ms := Round(raw + 0)
+    return (ms < 0 ? 0 : ms)
+}
+
+LogCitrixHotkeyDispatchTiming(elapsedBeforeSendMs, elapsedAfterSendMs, hwnd) {
+    global g_scriptStartIso, g_transferArg
+    logPath := A_ScriptDir "\transfert_citrix_timing.log"
+    stamp := FormatTime(A_Now, "yyyy-MM-dd HH:mm:ss")
+    hwndText := (hwnd ? Format("0x{:X}", hwnd) : "0")
+    line := stamp
+        . ";arg=" g_transferArg
+        . ";script_start=" g_scriptStartIso
+        . ";elapsed_before_send_ms=" elapsedBeforeSendMs
+        . ";elapsed_after_send_ms=" elapsedAfterSendMs
+        . ";citrix_hwnd=" hwndText
+        . "`r`n"
+    try FileAppend(line, logPath, "UTF-8")
+}
+
+CitrixPerfStart(flowName) {
+    tick := A_TickCount
+    return Map("flow", flowName, "startTick", tick, "lastTick", tick)
+}
+
+CitrixPerfMark(perf, stageName) {
+    global g_scriptStartTick, g_transferArg
+    if !IsObject(perf)
+        return
+
+    now := A_TickCount
+    deltaMs := now - perf["lastTick"]
+    flowElapsedMs := now - perf["startTick"]
+    scriptElapsedMs := now - g_scriptStartTick
+    perf["lastTick"] := now
+
+    stamp := FormatTime(A_Now, "yyyy-MM-dd HH:mm:ss")
+    logPath := A_ScriptDir "\transfert_citrix_timing_stages.log"
+    line := stamp
+        . ";arg=" g_transferArg
+        . ";flow=" perf["flow"]
+        . ";stage=" stageName
+        . ";delta_ms=" deltaMs
+        . ";flow_elapsed_ms=" flowElapsedMs
+        . ";script_elapsed_ms=" scriptElapsedMs
+        . "`r`n"
+    try FileAppend(line, logPath, "UTF-8")
 }
 
 FindCitrixHostWindow() {
@@ -664,7 +865,7 @@ if !WinWait("ahk_exe RadImage.exe", , 5) {
 
 ; === Step 3: Activate Radimage and send F8 ===
 WinActivate      ; bring Radimage to front
-WinWaitActive    ; wait until it’s actually active
+WinWaitActive    ; wait until itâ€™s actually active
 Send "{F8}"
 ; fin Fermer
 }
@@ -740,7 +941,7 @@ CheckFenDict(fenDict, win := "ahk_exe Radimage.exe") {
         }
     }
     SoundPlay "*16"
-    MsgBox "Impossible de vérifier si le rapport de l'examen est vide.`n`nVous êtes probablement dans le mauvais examen.`n`nLe script va s'arrêter.", "ERREUR", 262144
+    MsgBox "Impossible de vÃ©rifier si le rapport de l'examen est vide.`n`nVous Ãªtes probablement dans le mauvais examen.`n`nLe script va s'arrÃªter.", "ERREUR", 262144
     ExitApp
 }
 
@@ -787,7 +988,7 @@ CopyDataHandler(wParam, lParam, msg, hwnd) {
         data_context_json := text
     } else if (cmd = CMD_ERROR) {
         last_radedit_error := text
-        ; MsgBox "RadEdit error: " text  ; (optionnel) je le laisse commenté pour éviter les popups
+        ; MsgBox "RadEdit error: " text  ; (optionnel) je le laisse commentÃ© pour Ã©viter les popups
     }
     return true
 }
@@ -823,7 +1024,7 @@ CancelTransfer() {
         }
     }
 
-    MsgBox "Vous pouvez maintenant aller continuer votre dictée.", "TERMINÉ", 262144
+    MsgBox "Vous pouvez maintenant aller continuer votre dictÃ©e.", "TERMINÃ‰", 262144
 
     if WinExist("RadEdit ahk_exe RadEdit.exe") {
 	WinActivate
@@ -853,7 +1054,7 @@ ResetRadEdit(target, tempFile, reqnb_full) {
     } catch as err {
         MsgBox "Impossible d'effacer le fichier temporaire :`n" tempFile "`n`nErreur : " err.Message, "ATTENTION", 262144
     }
-    ; 3) Supprimer les HTML temporaires associés (RadEdit_<safeReqnb>_*.html)
+    ; 3) Supprimer les HTML temporaires associÃ©s (RadEdit_<safeReqnb>_*.html)
     if (reqnb_full != "") {
         safeReqnb := RegExReplace(reqnb_full, "[^\w-]", "_")
         pattern := A_ScriptDir "\Textes\HTML\RadEdit_" safeReqnb "*.html"
@@ -863,7 +1064,7 @@ ResetRadEdit(target, tempFile, reqnb_full) {
                 try FileDelete(A_LoopFileFullPath)
             }
         } catch as err {
-            ; optionnel: MsgBox si tu veux être averti d'un problème global de loop
+            ; optionnel: MsgBox si tu veux Ãªtre averti d'un problÃ¨me global de loop
             ; MsgBox "Erreur nettoyage HTML temp:`n" err.Message, "ATTENTION", 262144
         }
     }
@@ -888,7 +1089,7 @@ EraseRadEdit() {
     SendCopyData(target, CMD["SetDataContext"], "")
     SendCopyData(target, CMD["SetHtmlFile"], "")
 
-    ; 2) Supprimer le fichier temporaire associé si présent
+    ; 2) Supprimer le fichier temporaire associÃ© si prÃ©sent
     if (reqnb_title != "") {
         tempFile := A_Temp "\RadEdit_" reqnb_title ".rtf"
         try {
@@ -906,7 +1107,7 @@ EraseRadEdit() {
 GotoEndofText(){
 	target := WinExist("RadEdit ahk_exe RadEdit.exe")
 	if !target {
-	    MsgBox("❌ RadEdit non trouvé.")
+	    MsgBox("âŒ RadEdit non trouvÃ©.")
  	   ExitApp()
 	}
 

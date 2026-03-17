@@ -31,6 +31,16 @@ CtxBridgeEnsureStructure(rootDir := "") {
         DirCreate(queue)
     if !DirExist(archive)
         DirCreate(archive)
+    raw := StrLower(Trim(EnvGet("CITRIX_SINGLE_SLOT")))
+    singleSlot := (raw = "" || !(raw = "0" || raw = "false" || raw = "no" || raw = "off"))
+    if singleSlot {
+        slotName := Trim(EnvGet("CITRIX_SLOT_NAME"))
+        if (slotName = "")
+            slotName := "slot_current"
+        slotDir := queue "\" slotName
+        if !DirExist(slotDir)
+            DirCreate(slotDir)
+    }
 
     return Map("root", root, "queue", queue, "archive", archive)
 }

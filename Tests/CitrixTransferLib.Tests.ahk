@@ -9,10 +9,12 @@ Assert(condition, message) {
 
 RunTests() {
     oldRoot := EnvGet("RADEDITSYNC_DIR")
+    oldSingleSlot := EnvGet("CITRIX_SINGLE_SLOT")
     testRoot := A_Temp "\\CitrixBridge_Test_" FormatTime(A_NowUTC, "yyyyMMdd_HHmmss") "_" Format("{:06}", Random(0, 999999))
 
     try {
         EnvSet("RADEDITSYNC_DIR", testRoot)
+        EnvSet("CITRIX_SINGLE_SLOT", "0")
         dirs := CtxBridgeEnsureStructure()
         queue := dirs["queue"]
 
@@ -61,6 +63,7 @@ RunTests() {
     }
     finally {
         EnvSet("RADEDITSYNC_DIR", oldRoot)
+        EnvSet("CITRIX_SINGLE_SLOT", oldSingleSlot)
         try DirDelete(testRoot, 1)
     }
 }

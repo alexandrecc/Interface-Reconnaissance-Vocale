@@ -140,20 +140,60 @@ Transfer_Citrix(invocation := "manual") {
     }
 }
 
+Transfer_CitrixSignerDirect(invocation := "manual_signer") {
+    global g_ctxBusy, g_ctxInitLogged
+
+    if !g_ctxInitLogged {
+        g_ctxInitLogged := true
+        CtxLog("Citrix worker active. invocation=" invocation)
+    }
+
+    if g_ctxBusy {
+        CtxLogVerbose("Signer direct ignored (worker busy).")
+        return "busy"
+    }
+
+    g_ctxBusy := true
+    try {
+        CtxRunSignerOnly()
+        CtxLog("Signer direct completed.")
+        return "done"
+    } catch as err {
+        CtxLog("Signer direct failed: " err.Message)
+        if (invocation != "poll")
+            MsgBox "Erreur Signer Citrix:`n" err.Message, "Signer Citrix", 0x10
+        return "error"
+    } finally {
+        g_ctxBusy := false
+    }
+}
+
 CtxProcessNextJob(invocation := "manual") {
     processStartTick := A_TickCount
     checkpoints := Map()
     dirs := CtxBridgeEnsureStructure()
     CtxPerfMark(checkpoints, "cp1", processStartTick)
     queueDir := dirs["queue"]
-    hintDiag := CtxFindHintedJobDiag(queueDir)
-    jobDir := hintDiag["jobDir"]
-    CtxPerfMark(checkpoints, "cp2", processStartTick)
-    if (jobDir = "" && invocation != "poll") {
-        jobDir := CtxFindNextReadyJob(queueDir)
+    singleSlot := CtxUseSingleSlotMode()
+    if singleSlot {
+        jobDir := CtxFindSingleSlotReadyJob(queueDir)
+        hintDiag := Map(
+            "jobDir", jobDir,
+            "reason", (jobDir != "" ? "single_slot_ready" : "single_slot_not_ready"),
+            "hintRaw", ""
+        )
+        CtxPerfMark(checkpoints, "cp2", processStartTick)
         CtxPerfMark(checkpoints, "queue_scan_done", processStartTick)
     } else {
-        CtxPerfMark(checkpoints, "queue_scan_done", processStartTick)
+        hintDiag := CtxFindHintedJobDiag(queueDir)
+        jobDir := hintDiag["jobDir"]
+        CtxPerfMark(checkpoints, "cp2", processStartTick)
+        if (jobDir = "" && invocation != "poll") {
+            jobDir := CtxFindNextReadyJob(queueDir)
+            CtxPerfMark(checkpoints, "queue_scan_done", processStartTick)
+        } else {
+            CtxPerfMark(checkpoints, "queue_scan_done", processStartTick)
+        }
     }
     if (jobDir = "")
         return "idle"
@@ -173,7 +213,8 @@ CtxProcessNextJob(invocation := "manual") {
     }
     CtxPerfMark(checkpoints, "find_radimage_done", processStartTick)
 
-    CtxClearJobHintIfMatches(queueDir, jobDir, hintDiag)
+    if !singleSlot
+        CtxClearJobHintIfMatches(queueDir, jobDir, hintDiag)
     CtxPerfMark(checkpoints, "clear_hint_done", processStartTick)
 
     lockPath := jobDir "\processing.lock"
@@ -190,7 +231,7 @@ CtxProcessNextJob(invocation := "manual") {
         if !FileExist(metaPath)
             throw Error("meta.json introuvable pour job: " jobDir)
 
-        meta := CtxBridgeReadFlatJson(metaPath)
+        meta := CtxReadJobMetaWithRetry(metaPath)
         CtxPerfMark(checkpoints, "meta_read_done", processStartTick)
         if !meta.Has("jobId")
             meta["jobId"] := CtxGetJobIdFromPath(jobDir)
@@ -208,6 +249,8 @@ CtxProcessNextJob(invocation := "manual") {
                 donePayload["didAttVer"] := transferOutcome["didAttVer"]
             if (transferOutcome.Has("attVerTitres") && Trim(transferOutcome["attVerTitres"]) != "")
                 donePayload["attVerTitres"] := transferOutcome["attVerTitres"]
+            if (transferOutcome.Has("cancelled"))
+                donePayload["cancelled"] := transferOutcome["cancelled"]
         }
         CtxBridgeWriteDone(jobDir, donePayload)
         CtxLog("Job completed: " meta["jobId"])
@@ -232,6 +275,48 @@ CtxProcessNextJob(invocation := "manual") {
                 FileDelete(lockPath)
         }
     }
+}
+
+CtxReadJobMetaWithRetry(metaPath) {
+    attempts := CtxMetaReadRetryAttempts()
+    delayMs := CtxMetaReadRetryDelayMs()
+    lastErr := "meta.json incomplete"
+
+    Loop attempts {
+        try {
+            meta := CtxBridgeReadFlatJson(metaPath)
+            if (IsObject(meta) && meta.Count > 0 && meta.Has("mode") && Trim(meta["mode"]) != "")
+                return meta
+            lastErr := "meta.json incomplete (missing mode)"
+        } catch as err {
+            lastErr := err.Message
+        }
+
+        if (A_Index < attempts && delayMs > 0)
+            Sleep delayMs
+    }
+
+    throw Error("meta.json invalide/incomplet apres retry: " lastErr)
+}
+
+CtxMetaReadRetryAttempts() {
+    raw := Trim(EnvGet("CITRIX_META_READ_RETRIES"))
+    if RegExMatch(raw, "^\d+$") {
+        n := Integer(raw)
+        if (n >= 1 && n <= 50)
+            return n
+    }
+    return 12
+}
+
+CtxMetaReadRetryDelayMs() {
+    raw := Trim(EnvGet("CITRIX_META_READ_RETRY_MS"))
+    if RegExMatch(raw, "^\d+$") {
+        n := Integer(raw)
+        if (n >= 0 && n <= 1000)
+            return n
+    }
+    return 50
 }
 
 CtxTransferJobToRadImage(jobDir, meta, invocation := "manual") {
@@ -307,8 +392,17 @@ CtxTransferJobToRadImage(jobDir, meta, invocation := "manual") {
     try {
         word.ScreenUpdating := False
         examCheck := CtxCheckExamList(doc, effectiveReportPath, effectiveJobDir)
-        if (examCheck.Has("cancelled") && examCheck["cancelled"])
-            throw Error("Transfert annulé par l'utilisateur lors de la vérification des titres.")
+        if (examCheck.Has("cancelled") && examCheck["cancelled"]) {
+            stage := A_TickCount
+            CtxCancelTransferFromWord(radWin)
+            CtxLogStage(jobId, "cancel_return_radimage", stage)
+            CtxLogStage(jobId, "total", transferStart)
+            return Map(
+                "didAttVer", "false",
+                "attVerTitres", "",
+                "cancelled", "true"
+            )
+        }
 
         doc.Content.Delete()
         sel := word.Selection
@@ -395,6 +489,32 @@ CtxRunSignerOnly() {
 
     Sleep 20
     Send "^g"
+}
+
+CtxCancelTransferFromWord(radWin) {
+    ; Mirror local cancel behavior: close Word, return focus to RadImage, send Enter/F4,
+    ; and confirm the cancellation dialog if present.
+    Send "!{F4}"
+    WinWaitClose("ahk_exe WINWORD.EXE", , 4)
+    Sleep 30
+
+    if !WinWait(radWin, , 3)
+        throw Error("RadImage n'est pas revenu apres annulation.")
+
+    WinActivate(radWin)
+    if !WinWaitActive(radWin, , 2.5)
+        throw Error("RadImage inactif apres annulation.")
+
+    Sleep 20
+    Send "{Enter}"
+    Sleep 20
+    Send "{F4}"
+
+    if WinWait("Confirmation", , 1.5) {
+        WinActivate("Confirmation")
+        if WinWaitActive("Confirmation", , 1)
+            Send "{o}"
+    }
 }
 
 CtxSendF8ToRadImage(radWin) {
@@ -916,6 +1036,9 @@ CtxClickLotCourant(ctx := unset) {
 }
 
 CtxFindNextReadyJob(queueDir) {
+    if CtxUseSingleSlotMode()
+        return CtxFindSingleSlotReadyJob(queueDir)
+
     if !DirExist(queueDir)
         return ""
 
@@ -943,6 +1066,40 @@ CtxFindNextReadyJob(queueDir) {
     }
 
     return ""
+}
+
+CtxUseSingleSlotMode() {
+    raw := StrLower(Trim(EnvGet("CITRIX_SINGLE_SLOT")))
+    if (raw = "")
+        return true
+    return !(raw = "0" || raw = "false" || raw = "no" || raw = "off")
+}
+
+CtxSingleSlotName() {
+    raw := Trim(EnvGet("CITRIX_SLOT_NAME"))
+    return (raw != "" ? raw : "slot_current")
+}
+
+CtxFindSingleSlotReadyJob(queueDir) {
+    if !DirExist(queueDir)
+        return ""
+
+    jobDir := queueDir "\" CtxSingleSlotName()
+    if !DirExist(jobDir)
+        return ""
+
+    meta := jobDir "\meta.json"
+    report := jobDir "\report.rtf"
+    done := jobDir "\done.json"
+    err := jobDir "\error.json"
+    lock := jobDir "\processing.lock"
+
+    if !FileExist(meta) || !FileExist(report)
+        return ""
+    if FileExist(done) || FileExist(err) || FileExist(lock)
+        return ""
+
+    return jobDir
 }
 
 CtxFindHintedJob(queueDir) {
@@ -1747,9 +1904,15 @@ CtxInsertionsPath(fileName) {
     catch
         root := ""
     if (root != "") {
-        p4 := root "\..\Textes\Insertions\" fileName
+        ; Priority 4: user-specific cache on bridge share (...\Citrix Data\<username>\Textes\Insertions).
+        p4 := root "\Textes\Insertions\" fileName
         if FileExist(p4)
             return p4
+
+        ; Priority 5: legacy shared cache (...\Citrix Data\Textes\Insertions).
+        p5 := root "\..\Textes\Insertions\" fileName
+        if FileExist(p5)
+            return p5
     }
 
     return p1

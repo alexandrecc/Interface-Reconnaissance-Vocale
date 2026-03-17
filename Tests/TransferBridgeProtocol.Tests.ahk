@@ -7,10 +7,12 @@ Assert(condition, message) {
 }
 
 RunTests() {
+    oldSingleSlot := EnvGet("CITRIX_SINGLE_SLOT")
     testRoot := A_Temp "\\RadEditSync_Test_" BridgeNewJobId("suite")
     srcReport := testRoot "\\source_report.rtf"
 
     try {
+        EnvSet("CITRIX_SINGLE_SLOT", "0")
         DirCreate(testRoot)
         FileAppend("{\\rtf1\\ansi Bridge Test}", srcReport, "UTF-8")
 
@@ -56,6 +58,7 @@ RunTests() {
         Assert(errMeta["errorCode"] = "RADIMAGE_TIMEOUT", "errorCode mismatch")
     }
     finally {
+        EnvSet("CITRIX_SINGLE_SLOT", oldSingleSlot)
         try DirDelete(testRoot, 1)
     }
 }
