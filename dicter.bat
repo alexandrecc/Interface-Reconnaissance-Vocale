@@ -11,6 +11,10 @@ robocopy "%SRC%" "%DST%" %ROBO_OPTS%
 
 pushd "%DST%"
 
+if exist ".\Script\cache_insertions_to_bridge.bat" (
+  call ".\Script\cache_insertions_to_bridge.bat" >nul 2>&1
+)
+
 start "" ".\sync_from_network.ahk"
 
 powershell -NoProfile -ExecutionPolicy Bypass -Command ^
