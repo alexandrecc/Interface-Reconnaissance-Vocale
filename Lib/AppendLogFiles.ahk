@@ -14,6 +14,14 @@ LogFile(target, result, didAttVer) {
     LogFromDataContext(target)
 }
 
+LogFileCitrix(source) {
+    global target
+    target := source
+    if (HasArg("ToutSUG") || HasArg("ToutSUGCitrix"))
+        LogSUG()
+
+    LogFromDataContext(target)
+}
 
 LogAttVer(titres := [], rootPath := "R:\CSSSNL\Bureautique\Imagerie Medicale\Partage\Suivi Urgence") {
 
