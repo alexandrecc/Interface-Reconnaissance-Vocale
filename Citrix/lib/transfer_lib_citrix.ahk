@@ -9,6 +9,7 @@ global g_ctxCache := Map(
     "tabCtrl", "",
     "tabIndex", 0,
     "reqCtrl", "",
+    "reqFallbackLoggedCtrl", "",
     "lotButton", "",
     "fenDict", "",
     "editCtrls", [],
@@ -33,6 +34,7 @@ CtxInitRuntime() {
     g_ctxCache["tabCtrl"] := ""
     g_ctxCache["tabIndex"] := 0
     g_ctxCache["reqCtrl"] := ""
+    g_ctxCache["reqFallbackLoggedCtrl"] := ""
     g_ctxCache["lotButton"] := ""
     g_ctxCache["fenDict"] := ""
     g_ctxCache["editCtrls"] := []
@@ -240,32 +242,26 @@ CtxProcessNextJob(invocation := "manual") {
         CtxPerfMark(checkpoints, "cp4", processStartTick)
         transferOutcome := CtxTransferJobToRadImage(jobDir, meta, invocation)
         CtxPerfMark(checkpoints, "cp5", processStartTick)
-        donePayload := Map(
-            "jobId", meta["jobId"],
-            "worker", A_ComputerName
-        )
-        if IsObject(transferOutcome) {
-            if (transferOutcome.Has("didAttVer"))
-                donePayload["didAttVer"] := transferOutcome["didAttVer"]
-            if (transferOutcome.Has("attVerTitres") && Trim(transferOutcome["attVerTitres"]) != "")
-                donePayload["attVerTitres"] := transferOutcome["attVerTitres"]
-            if (transferOutcome.Has("cancelled"))
-                donePayload["cancelled"] := transferOutcome["cancelled"]
-        }
-        CtxBridgeWriteDone(jobDir, donePayload)
+        if !CtxTransferDoneAlreadyWritten(transferOutcome)
+            CtxBridgeWriteDone(jobDir, CtxBuildDonePayload(meta, transferOutcome))
         CtxLog("Job completed: " meta["jobId"])
         CtxPerfMark(checkpoints, "cp6", processStartTick)
         CtxPerfFlushJob("done", checkpoints)
         return "done"
     } catch as err {
         jobId := meta.Has("jobId") ? meta["jobId"] : CtxGetJobIdFromPath(jobDir)
-        CtxBridgeWriteError(jobDir, Map(
-            "jobId", jobId,
-            "worker", A_ComputerName,
-            "errorCode", "TRANSFER_FAILED",
-            "message", err.Message
-        ))
-        CtxLog("Job failed: " jobId " - " err.Message)
+        donePath := jobDir "\done.json"
+        if !FileExist(donePath) {
+            CtxBridgeWriteError(jobDir, Map(
+                "jobId", jobId,
+                "worker", A_ComputerName,
+                "errorCode", "TRANSFER_FAILED",
+                "message", err.Message
+            ))
+            CtxLog("Job failed: " jobId " - " err.Message)
+        } else {
+            CtxLog("Job failed after done.json was written: " jobId " - " err.Message)
+        }
         CtxPerfSetJobId(jobId)
         CtxPerfFlushJob("error", checkpoints)
         return "error"
@@ -275,6 +271,30 @@ CtxProcessNextJob(invocation := "manual") {
                 FileDelete(lockPath)
         }
     }
+}
+
+CtxBuildDonePayload(meta, transferOutcome := unset) {
+    donePayload := Map(
+        "jobId", meta["jobId"],
+        "worker", A_ComputerName
+    )
+
+    if IsSet(transferOutcome) && IsObject(transferOutcome) {
+        if (transferOutcome.Has("didAttVer"))
+            donePayload["didAttVer"] := transferOutcome["didAttVer"]
+        if (transferOutcome.Has("attVerTitres") && Trim(transferOutcome["attVerTitres"]) != "")
+            donePayload["attVerTitres"] := transferOutcome["attVerTitres"]
+        if (transferOutcome.Has("cancelled"))
+            donePayload["cancelled"] := transferOutcome["cancelled"]
+    }
+
+    return donePayload
+}
+
+CtxTransferDoneAlreadyWritten(transferOutcome) {
+    return (IsObject(transferOutcome)
+        && transferOutcome.Has("doneWritten")
+        && StrLower(Trim(transferOutcome["doneWritten"])) = "true")
 }
 
 CtxReadJobMetaWithRetry(metaPath) {
@@ -325,6 +345,7 @@ CtxTransferJobToRadImage(jobDir, meta, invocation := "manual") {
     mode := CtxJobMode(meta)
     didAttVer := false
     attVerTitres := ""
+    doneWritten := false
 
     if CtxIsSignerMode(mode) {
         stage := A_TickCount
@@ -417,15 +438,21 @@ CtxTransferJobToRadImage(jobDir, meta, invocation := "manual") {
 
         stage := A_TickCount
         manualAttVer := CtxMetaTrue(meta, "attv")
-        if manualAttVer {
-            CtxInsertManualAttVer(doc)
-            didAttVer := true
-        } else if (examCheck.Has("needAttVer") && examCheck["needAttVer"]) {
-            CtxAttVer(doc)
-            didAttVer := true
-        }
+        didAttVer := manualAttVer || (examCheck.Has("needAttVer") && examCheck["needAttVer"])
         if (didAttVer && examCheck.Has("titres") && IsObject(examCheck["titres"]) && examCheck["titres"].Length > 0)
             attVerTitres := CtxJoin(examCheck["titres"], "||")
+
+        CtxBridgeWriteDone(jobDir, CtxBuildDonePayload(meta, Map(
+            "didAttVer", (didAttVer ? "true" : "false"),
+            "attVerTitres", attVerTitres
+        )))
+        doneWritten := true
+
+        if manualAttVer {
+            CtxInsertManualAttVer(doc)
+        } else if (didAttVer) {
+            CtxAttVer(doc)
+        }
         CtxLogStage(jobId, "apply_attver", stage)
 
         stage := A_TickCount
@@ -457,7 +484,8 @@ CtxTransferJobToRadImage(jobDir, meta, invocation := "manual") {
     CtxLogStage(jobId, "total", transferStart)
     return Map(
         "didAttVer", (didAttVer ? "true" : "false"),
-        "attVerTitres", attVerTitres
+        "attVerTitres", attVerTitres,
+        "doneWritten", (doneWritten ? "true" : "false")
     )
 }
 
@@ -541,6 +569,13 @@ CtxValidateTarget(ctx, meta) {
     ; RadImage fields can lag briefly after a manual exam change in Citrix.
     current := CtxReadRadReqNormWithRetry(ctx, expected, 2200, 120)
 
+    if (expected != "" && current = "") {
+        try CtxLogReqLookupFailure(ctx, expected)
+        catch as diagErr
+            CtxLog("Req lookup diagnostics failed: " diagErr.Message)
+        throw Error("Numéro de requête RadImage introuvable.")
+    }
+
     if (expected != "" && current != "" && expected != current) {
         throw Error(
             "Requête active RadImage différente du job.`n"
@@ -562,6 +597,7 @@ CtxValidateTarget(ctx, meta) {
 CtxClearReqReadCache() {
     global g_ctxCache
     g_ctxCache["reqCtrl"] := ""
+    g_ctxCache["reqFallbackLoggedCtrl"] := ""
 }
 
 CtxReadRadReqNormWithRetry(ctx, expectedNorm := "", maxMs := 2200, intervalMs := 120) {
@@ -670,16 +706,19 @@ CtxGetRadImageContextByPattern() {
 
     winSpec := "ahk_id " hwnd
     winClass := WinGetClass(winSpec)
-    appseg := RegExReplace(winClass, ".*\b(app\.[^_]+).*", "$1")
-    if (appseg = "" || appseg = winClass)
+    ctrlSeg := ""
+    if !RegExMatch(winClass, "\b(app\.[^_]+_r\d+)_ad\d+\b", &m)
         return 0
+    ctrlSeg := m[1]
 
     return Map(
-        "tabCtrl", "WindowsForms10.SysTabControl32." appseg "_r8_ad11",
-        "fenDict", "WindowsForms10.RichEdit20W." appseg "_r8_ad11",
-        "numReq27", "WindowsForms10.EDIT." appseg "_r8_ad127",
-        "numReq30", "WindowsForms10.EDIT." appseg "_r8_ad130",
-        "numReq48", "WindowsForms10.EDIT." appseg "_r8_ad148",
+        "tabCtrl", "WindowsForms10.SysTabControl32." ctrlSeg "_ad11",
+        "fenDict", "WindowsForms10.RichEdit20W." ctrlSeg "_ad11",
+        "numReq27", "WindowsForms10.EDIT." ctrlSeg "_ad127",
+        "numReq30", "WindowsForms10.EDIT." ctrlSeg "_ad130",
+        "numReq48", "WindowsForms10.EDIT." ctrlSeg "_ad148",
+        "numReq124", "WindowsForms10.EDIT." ctrlSeg "_ad124",
+        "source", "pattern",
         "editCtrls", []
     )
 }
@@ -714,6 +753,8 @@ CtxGetRadImageContextByScan() {
         "numReq27", "",
         "numReq30", "",
         "numReq48", "",
+        "numReq124", "",
+        "source", "scan",
         "editCtrls", editCtrls
     )
 }
@@ -784,7 +825,7 @@ CtxReadRadReqNorm(ctx, expectedNorm := "", allowCached := true) {
     bestScore := -1
     bestCtrl := ""
 
-    for key in ["numReq48", "numReq30", "numReq27"] {
+    for key in ["numReq48", "numReq30", "numReq27", "numReq124"] {
         if !ctx.Has(key)
             continue
         ctrl := ctx[key]
@@ -818,8 +859,15 @@ CtxReadRadReqNorm(ctx, expectedNorm := "", allowCached := true) {
         for ctrl in editCtrls {
             val := CtxReadControlTextSafe(ctrl)
             cand := CtxReqCandidate(val)
+            if (cand["score"] < 6)
+                continue
+
             if (expectedNorm != "" && cand["norm"] = expectedNorm) {
                 g_ctxCache["reqCtrl"] := ctrl
+                if (g_ctxCache["reqFallbackLoggedCtrl"] != ctrl) {
+                    g_ctxCache["reqFallbackLoggedCtrl"] := ctrl
+                    CtxLog("Fallback req control used: " ctrl)
+                }
                 return cand["norm"]
             }
             if (cand["score"] > bestScore) {
@@ -830,9 +878,14 @@ CtxReadRadReqNorm(ctx, expectedNorm := "", allowCached := true) {
         }
     }
 
-    if (bestScore >= 2) {
-        if (bestCtrl != "")
+    if (bestScore >= 6) {
+        if (bestCtrl != "") {
             g_ctxCache["reqCtrl"] := bestCtrl
+            if (g_ctxCache["reqFallbackLoggedCtrl"] != bestCtrl) {
+                g_ctxCache["reqFallbackLoggedCtrl"] := bestCtrl
+                CtxLog("Fallback req control used: " bestCtrl)
+            }
+        }
         return bestNorm
     }
     return ""
@@ -866,6 +919,123 @@ CtxBuildControlSummary() {
     }
 
     return "class=" className " controls=" ctrls.Length " tabs=" tabs " edits=" edits " rich=" rich " buttons=" buttons
+}
+
+CtxLogReqLookupFailure(ctx, expectedNorm := "") {
+    global g_ctxCache
+
+    hwnd := CtxFindRadImageHwnd()
+    if !hwnd {
+        CtxLog("Req lookup failed. expected=" expectedNorm " hwnd=0")
+        return
+    }
+
+    win := "ahk_id " hwnd
+    className := ""
+    try className := WinGetClass(win)
+
+    source := "unknown"
+    usedTabIndex := ""
+    ctxEditCount := -1
+    if IsObject(ctx) {
+        if (ctx.Has("source") && ctx["source"] != "")
+            source := ctx["source"]
+        if (ctx.Has("usedTabIndex"))
+            usedTabIndex := ctx["usedTabIndex"]
+        if (ctx.Has("editCtrls") && IsObject(ctx["editCtrls"]))
+            ctxEditCount := ctx["editCtrls"].Length
+    }
+
+    cachedReqCtrl := g_ctxCache["reqCtrl"]
+    CtxLog(
+        "Req lookup failed. expected=" expectedNorm
+        . " source=" source
+        . " usedTabIndex=" usedTabIndex
+        . " ctxEditCount=" ctxEditCount
+        . " cachedReqCtrl=" (cachedReqCtrl != "" ? cachedReqCtrl : "<none>")
+        . " class=" className
+        . " " CtxBuildControlSummary()
+    )
+
+    parts := []
+    for key in ["numReq48", "numReq30", "numReq27", "numReq124"] {
+        ctrl := ""
+        if (IsObject(ctx) && ctx.Has(key))
+            ctrl := ctx[key]
+        parts.Push(key "{" CtxDescribeReqControl(win, ctrl) "}")
+    }
+    CtxLog("Req priority controls. " CtxJoin(parts, " "))
+    CtxLog("Req live edit snapshot. " CtxDescribeLiveReqEditControls(win, 8))
+}
+
+CtxDescribeReqControl(win, ctrl) {
+    if (ctrl = "")
+        return "ctrl=<empty> exists=0 text_len=0 digits=0 hyphen=0 strict=0 norm=<none>"
+
+    exists := false
+    try {
+        _ := ControlGetHwnd(ctrl, win)
+        exists := true
+    } catch {
+    }
+
+    raw := ""
+    if exists {
+        try raw := ControlGetText(ctrl, win)
+        catch
+            raw := ""
+    }
+
+    return "ctrl=" ctrl " exists=" (exists ? "1" : "0") " " CtxDescribeReqValue(raw)
+}
+
+CtxDescribeLiveReqEditControls(win, limit := 8) {
+    try ctrls := WinGetControls(win)
+    catch
+        return "controls=unavailable"
+
+    totalEdits := 0
+    nonEmptyEdits := 0
+    strictMatches := 0
+    samples := []
+
+    for ctrl in ctrls {
+        if !InStr(ctrl, "WindowsForms10.EDIT.")
+            continue
+
+        totalEdits++
+        raw := ""
+        try raw := ControlGetText(ctrl, win)
+        catch
+            raw := ""
+
+        trimmed := Trim(raw)
+        norm := CtxNormalizeRadReqDisplay(trimmed)
+        if (trimmed != "")
+            nonEmptyEdits++
+        if (norm != "")
+            strictMatches++
+
+        if (trimmed != "" && samples.Length < limit)
+            samples.Push(ctrl "{" CtxDescribeReqValue(trimmed) "}")
+    }
+
+    msg := "total=" totalEdits " nonEmpty=" nonEmptyEdits " strict=" strictMatches
+    if (samples.Length > 0)
+        msg .= " sample=" CtxJoin(samples, " ")
+    return msg
+}
+
+CtxDescribeReqValue(value) {
+    trimmed := Trim("" value)
+    digits := StrLen(RegExReplace(trimmed, "[^\d]"))
+    hasHyphen := InStr(trimmed, "-") ? "1" : "0"
+    norm := CtxNormalizeRadReqDisplay(trimmed)
+    return "text_len=" StrLen(trimmed)
+        . " digits=" digits
+        . " hyphen=" hasHyphen
+        . " strict=" (norm != "" ? "1" : "0")
+        . " norm=" (norm != "" ? norm : "<none>")
 }
 
 CtxGetTabControls() {
@@ -935,6 +1105,7 @@ CtxRefreshCacheForWindow() {
     g_ctxCache["tabCtrl"] := ""
     g_ctxCache["tabIndex"] := 0
     g_ctxCache["reqCtrl"] := ""
+    g_ctxCache["reqFallbackLoggedCtrl"] := ""
     g_ctxCache["lotButton"] := ""
     g_ctxCache["fenDict"] := ""
     g_ctxCache["editCtrls"] := []
@@ -977,22 +1148,19 @@ CtxNormalizeReq(value) {
     return s
 }
 
+CtxNormalizeRadReqDisplay(value) {
+    raw := Trim("" value)
+    if !RegExMatch(raw, "^(\d{2})\s*-\s*(\d{6})$", &m)
+        return ""
+    return m[1] m[2]
+}
+
 CtxReqCandidate(raw) {
-    norm := CtxNormalizeReq(raw)
+    norm := CtxNormalizeRadReqDisplay(raw)
     if (norm = "")
         return Map("norm", "", "score", -1)
 
-    score := 1
-    if RegExMatch(raw, "\d{2}\s*-\s*\d{6}")
-        score += 5
-    else if RegExMatch(raw, "\d{4}\s*-\s*\d{4}")
-        score += 4
-    else if InStr(raw, "-")
-        score += 2
-    if RegExMatch(raw, "(^|[^\d])\d{8}([^\d]|$)")
-        score += 1
-
-    return Map("norm", norm, "score", score)
+    return Map("norm", norm, "score", 6)
 }
 
 CtxReadControlTextSafe(ctrl) {
