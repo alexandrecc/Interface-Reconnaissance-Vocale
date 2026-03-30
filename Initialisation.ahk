@@ -86,7 +86,7 @@ if (A_Args.Length == 8) {
     if FileExist(savedHtml) {
         SendCopyData(target, CMD["SetHtmlFile"], savedHtml)
     } else {
-        htmlNew := SelectHtmlTemplate(modal, safeProc)
+        htmlNew := SelectHtmlTemplate(modal, safeProc, loc)
         if (htmlNew != "") {
             SendCopyData(target, CMD["SetHtmlFile"], htmlNew)
             } else {
@@ -346,12 +346,20 @@ BuildInitContextJson(proc, modal, loc, first, reqnb, patdos, patnom, dateexam) {
         . "}"
 }
 
-SelectHtmlTemplate(modal, safeProc) {
+SelectHtmlTemplate(modal, safeProc, loc) {
     global PATH
 
-    ;p1 := PATH "HTML\" modal "\" safeProc ".html"
-    ;if FileExist(p1)
-    ;    return p1
+    p00 := PATH "HTML\" loc "\" safeProc ".html"
+    if FileExist(p00)
+        return p00
+
+    p01 := PATH "HTML\" loc "\Default.html"
+    if FileExist(p01)
+        return p01
+
+    p1 := PATH "HTML\" modal "\" safeProc ".html"
+    if FileExist(p1)
+        return p1
 
     p2 := PATH "HTML\" safeProc ".html"
     if FileExist(p2)

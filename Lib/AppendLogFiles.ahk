@@ -8,7 +8,7 @@ LogFile(target, result, didAttVer) {
             LogAttVer(result.titres)
     }
 
-    if (HasArg("ToutSUG"))
+    if (HasArg("LogSUG"))
         LogSUG()
 
     LogFromDataContext(target)
