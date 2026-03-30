@@ -21,6 +21,23 @@ if !FileExist(configFile) {
 
 targetPath := ""
 
+ShowSyncStatus(title, message) {
+    statusGui := Gui("+AlwaysOnTop -SysMenu +ToolWindow", title)
+    statusGui.MarginX := 14
+    statusGui.MarginY := 12
+    statusGui.SetFont("s10", "Segoe UI")
+    statusGui.Add("Text", "w420", message)
+    statusGui.Show("AutoSize Center")
+    Sleep 75
+    return statusGui
+}
+
+HideSyncStatus(statusGui) {
+    if !IsObject(statusGui)
+        return
+    try statusGui.Destroy()
+}
+
 ; --- Read CSV and find matching user ---------------------------------
 Loop Read, configFile {
     line := A_LoopReadLine
@@ -81,18 +98,36 @@ if DirExist(destTextesDir) {
 
 if DirExist(textesSource) {
     ; Copy from user's TargetPath\Textes
+    statusGui := ShowSyncStatus(
+        "Synchronisation",
+        "Copie des fichiers Textes en cours...`n`n"
+        . "Source:`n" textesSource "`n`n"
+        . "Destination:`n" destTextesDir "`n`n"
+        . "Veuillez patienter."
+    )
     try {
         DirCopy(textesSource, destTextesDir, 1)  ; overwrite = 1
+        HideSyncStatus(statusGui)
         MsgBox "Copied '" textesSource "' to:`n" destTextesDir
     } catch Error as e {
+        HideSyncStatus(statusGui)
         MsgBox "Error copying from source Textes:`n" textesSource "`n`n" e.Message
     }
 } else if DirExist(defaultDir) {
     ; No Textes in TargetPath → use ./Default
+    statusGui := ShowSyncStatus(
+        "Synchronisation",
+        "Copie du dossier par défaut en cours...`n`n"
+        . "Source:`n" defaultDir "`n`n"
+        . "Destination:`n" destTextesDir "`n`n"
+        . "Veuillez patienter."
+    )
     try {
         DirCopy(defaultDir, destTextesDir, 1)
+        HideSyncStatus(statusGui)
         MsgBox "No '" textesFolderName "' in target path.`nUsed default folder instead:`n" defaultDir "`n→ `n" destTextesDir
     } catch Error as e {
+        HideSyncStatus(statusGui)
         MsgBox "Error copying from Default directory:`n" defaultDir "`n`n" e.Message
     }
 } else {

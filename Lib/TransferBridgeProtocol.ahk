@@ -189,8 +189,21 @@ BridgeCleanupSlotArtifacts(jobDir) {
     try BridgeDeleteIfExists(jobDir "\ready.flag")
 }
 
+BridgeTimingLogsEnabled() {
+    static initialized := false
+    static enabled := false
+
+    if !initialized {
+        raw := StrLower(Trim(EnvGet("CITRIX_TIMING_LOGS")))
+        enabled := (raw = "1" || raw = "true" || raw = "yes" || raw = "on")
+        initialized := true
+    }
+
+    return enabled
+}
+
 BridgeLogJobIoTiming(flow, stage, deltaMs, elapsedMs) {
-    if (Trim(flow) = "")
+    if (Trim(flow) = "" || !BridgeTimingLogsEnabled())
         return
 
     stamp := FormatTime(A_Now, "yyyy-MM-dd HH:mm:ss")

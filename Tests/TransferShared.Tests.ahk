@@ -21,6 +21,10 @@ RunTests() {
     Assert(HasArg("alpha"), "HasArg should match alpha")
     Assert(HasArg("BETA"), "HasArg should be case-insensitive")
     Assert(!HasArg("gamma"), "HasArg should not match missing arg")
+
+    Assert(IsLocalSynapseWindowTitle("Synapse v5.7 - Microsoft Edge"), "Synapse v5.7 title should match")
+    Assert(IsLocalSynapseWindowTitle("NL-PACS.REGIONAL.REG14.RTSS.QC.CA - Microsoft Edge"), "Synapse nl-pacs title should match")
+    Assert(!IsLocalSynapseWindowTitle("Microsoft Edge"), "Generic Edge title should not match")
 }
 
 try {

@@ -125,3 +125,34 @@ HasArg(name) {
             return true
     return false
 }
+
+LocalSynapseTitleHints() {
+    static hints := ["v5.7", "nl-pacs.regional.reg14.rtss.qc.ca"]
+    return hints
+}
+
+IsLocalSynapseWindowTitle(title) {
+    normalizedTitle := StrLower(Trim(title))
+    if (normalizedTitle = "")
+        return false
+
+    for hint in LocalSynapseTitleHints() {
+        if InStr(normalizedTitle, hint)
+            return true
+    }
+
+    return false
+}
+
+FindLocalSynapseWindow() {
+    for hwnd in WinGetList("ahk_exe msedge.exe") {
+        try winTitle := WinGetTitle("ahk_id " hwnd)
+        catch
+            continue
+
+        if IsLocalSynapseWindowTitle(winTitle)
+            return hwnd
+    }
+
+    return 0
+}

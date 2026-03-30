@@ -34,6 +34,23 @@ if !FileExist(DriveLetter . "\")
 
 targetPath := ""
 
+ShowSyncStatus(title, message) {
+    statusGui := Gui("+AlwaysOnTop -SysMenu +ToolWindow", title)
+    statusGui.MarginX := 14
+    statusGui.MarginY := 12
+    statusGui.SetFont("s10", "Segoe UI")
+    statusGui.Add("Text", "w420", message)
+    statusGui.Show("AutoSize Center")
+    Sleep 75
+    return statusGui
+}
+
+HideSyncStatus(statusGui) {
+    if !IsObject(statusGui)
+        return
+    try statusGui.Destroy()
+}
+
 ; --- Read CSV and find matching user ---------------------------------
 Loop Read, configFile {
     line := A_LoopReadLine
@@ -79,11 +96,20 @@ if !DirExist(targetPath) {
 targetTextesDir := targetPath "\" textesFolderName
 
 ; -------- Copy local .\Textes -> TargetPath\Textes ------------------
+statusGui := ShowSyncStatus(
+    "Synchronisation",
+    "Copie des fichiers Textes vers le dossier réseau en cours...`n`n"
+    . "Source:`n" localTextesDir "`n`n"
+    . "Destination:`n" targetTextesDir "`n`n"
+    . "Veuillez patienter."
+)
 try {
     ; 1 = overwrite existing files/dirs
     DirCopy(localTextesDir, targetTextesDir, 1)
+    HideSyncStatus(statusGui)
     MsgBox "Copied local '" localTextesDir "' to:`n" targetTextesDir
 } catch Error as e {
+    HideSyncStatus(statusGui)
     MsgBox "Error copying to target Textes directory:`n" targetTextesDir "`n`n" e.Message
 }
 
