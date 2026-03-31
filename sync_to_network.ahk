@@ -51,6 +51,53 @@ HideSyncStatus(statusGui) {
     try statusGui.Destroy()
 }
 
+PowerShellLiteral(value) {
+    return "'" StrReplace(value, "'", "''") "'"
+}
+
+NewTempFilePath(prefix, extension := ".txt") {
+    return A_Temp "\" prefix "_" A_TickCount "_" Random(1000, 9999) extension
+}
+
+CopyDirectoryResponsive(sourceDir, destDir) {
+    resultFile := NewTempFilePath("sync_to_network")
+    powershellExe := A_WinDir "\System32\WindowsPowerShell\v1.0\powershell.exe"
+    psCommand := "$ErrorActionPreference='Stop';"
+        . "try {"
+        . "if (-not (Test-Path -LiteralPath " PowerShellLiteral(destDir) ")) { "
+        . "New-Item -ItemType Directory -Path " PowerShellLiteral(destDir) " -Force | Out-Null "
+        . "};"
+        . "Get-ChildItem -LiteralPath " PowerShellLiteral(sourceDir) " -Force | ForEach-Object { "
+        . "Copy-Item -LiteralPath $_.FullName -Destination " PowerShellLiteral(destDir) " -Recurse -Force "
+        . "};"
+        . "Set-Content -LiteralPath " PowerShellLiteral(resultFile) " -Value 'OK' -Encoding UTF8"
+        . "} catch {"
+        . "Set-Content -LiteralPath " PowerShellLiteral(resultFile) " -Value $_.Exception.Message -Encoding UTF8;"
+        . "exit 1"
+        . "}"
+    commandLine := '"' powershellExe '" -NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -Command "' psCommand '"'
+
+    try Run(commandLine, , "Hide", &copyPid)
+    catch Error as e {
+        throw Error("Unable to start the copy worker.`n`n" e.Message)
+    }
+
+    while ProcessExist(copyPid)
+        Sleep 100
+
+    if !FileExist(resultFile)
+        throw Error("The copy worker ended without returning a result.")
+
+    try {
+        resultText := Trim(FileRead(resultFile, "UTF-8"), "`r`n`t ")
+    } finally {
+        try FileDelete(resultFile)
+    }
+
+    if (resultText != "OK")
+        throw Error(resultText = "" ? "The copy worker failed without an error message." : resultText)
+}
+
 ; --- Read CSV and find matching user ---------------------------------
 Loop Read, configFile {
     line := A_LoopReadLine
@@ -104,8 +151,7 @@ statusGui := ShowSyncStatus(
     . "Veuillez patienter."
 )
 try {
-    ; 1 = overwrite existing files/dirs
-    DirCopy(localTextesDir, targetTextesDir, 1)
+    CopyDirectoryResponsive(localTextesDir, targetTextesDir)
     HideSyncStatus(statusGui)
     MsgBox "Copied local '" localTextesDir "' to:`n" targetTextesDir
 } catch Error as e {

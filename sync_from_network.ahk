@@ -12,14 +12,14 @@ userKey  := StrLower(userName)
 
 ; Base directory = current working directory (where script is run from)
 baseDir := A_WorkingDir
+targetPath := ""
+syncExitCode := 1
 
 ; Make sure the config file exists
 if !FileExist(configFile) {
     MsgBox "Config file not found:`n" configFile
-    ExitApp
+    ExitApp syncExitCode
 }
-
-targetPath := ""
 
 ShowSyncStatus(title, message) {
     statusGui := Gui("+AlwaysOnTop -SysMenu +ToolWindow", title)
@@ -36,6 +36,53 @@ HideSyncStatus(statusGui) {
     if !IsObject(statusGui)
         return
     try statusGui.Destroy()
+}
+
+PowerShellLiteral(value) {
+    return "'" StrReplace(value, "'", "''") "'"
+}
+
+NewTempFilePath(prefix, extension := ".txt") {
+    return A_Temp "\" prefix "_" A_TickCount "_" Random(1000, 9999) extension
+}
+
+CopyDirectoryResponsive(sourceDir, destDir) {
+    resultFile := NewTempFilePath("sync_from_network")
+    powershellExe := A_WinDir "\System32\WindowsPowerShell\v1.0\powershell.exe"
+    psCommand := "$ErrorActionPreference='Stop';"
+        . "try {"
+        . "if (-not (Test-Path -LiteralPath " PowerShellLiteral(destDir) ")) { "
+        . "New-Item -ItemType Directory -Path " PowerShellLiteral(destDir) " -Force | Out-Null "
+        . "};"
+        . "Get-ChildItem -LiteralPath " PowerShellLiteral(sourceDir) " -Force | ForEach-Object { "
+        . "Copy-Item -LiteralPath $_.FullName -Destination " PowerShellLiteral(destDir) " -Recurse -Force "
+        . "};"
+        . "Set-Content -LiteralPath " PowerShellLiteral(resultFile) " -Value 'OK' -Encoding UTF8"
+        . "} catch {"
+        . "Set-Content -LiteralPath " PowerShellLiteral(resultFile) " -Value $_.Exception.Message -Encoding UTF8;"
+        . "exit 1"
+        . "}"
+    commandLine := '"' powershellExe '" -NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -Command "' psCommand '"'
+
+    try Run(commandLine, , "Hide", &copyPid)
+    catch Error as e {
+        throw Error("Unable to start the copy worker.`n`n" e.Message)
+    }
+
+    while ProcessExist(copyPid)
+        Sleep 100
+
+    if !FileExist(resultFile)
+        throw Error("The copy worker ended without returning a result.")
+
+    try {
+        resultText := Trim(FileRead(resultFile, "UTF-8"), "`r`n`t ")
+    } finally {
+        try FileDelete(resultFile)
+    }
+
+    if (resultText != "OK")
+        throw Error(resultText = "" ? "The copy worker failed without an error message." : resultText)
 }
 
 ; --- Read CSV and find matching user ---------------------------------
@@ -70,7 +117,7 @@ Loop Read, configFile {
 
 if (targetPath = "") {
     MsgBox "No matching entry found in the config for user: " userName
-    ExitApp
+    ExitApp syncExitCode
 }
 
 ; --- Determine source & destination ----------------------------------
@@ -90,7 +137,7 @@ if DirExist(destTextesDir) {
         DirDelete(destTextesDir, 1)  ; 1 = recursive
     } catch Error as e {
         MsgBox "Error deleting existing Textes directory:`n" destTextesDir "`n`n" e.Message
-        ExitApp
+        ExitApp syncExitCode
     }
 }
 
@@ -106,8 +153,9 @@ if DirExist(textesSource) {
         . "Veuillez patienter."
     )
     try {
-        DirCopy(textesSource, destTextesDir, 1)  ; overwrite = 1
+        CopyDirectoryResponsive(textesSource, destTextesDir)
         HideSyncStatus(statusGui)
+        syncExitCode := 0
         MsgBox "Copied '" textesSource "' to:`n" destTextesDir
     } catch Error as e {
         HideSyncStatus(statusGui)
@@ -123,8 +171,9 @@ if DirExist(textesSource) {
         . "Veuillez patienter."
     )
     try {
-        DirCopy(defaultDir, destTextesDir, 1)
+        CopyDirectoryResponsive(defaultDir, destTextesDir)
         HideSyncStatus(statusGui)
+        syncExitCode := 0
         MsgBox "No '" textesFolderName "' in target path.`nUsed default folder instead:`n" defaultDir "`n→ `n" destTextesDir
     } catch Error as e {
         HideSyncStatus(statusGui)
@@ -134,4 +183,4 @@ if DirExist(textesSource) {
     MsgBox "No '" textesFolderName "' directory found at:`n" textesSource "`n`nAnd no 'Default' directory found at:`n" defaultDir
 }
 
-ExitApp
+ExitApp syncExitCode
